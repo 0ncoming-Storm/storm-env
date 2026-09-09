@@ -1,12 +1,20 @@
 #!/bin/bash
-# bootstrap.sh - Storm Package Manager Installer (Verbose)
+# bootstrap.sh - Storm Package Manager Installer (With Logging)
 
 STORM="/tmp/$USER-storm"
 BIN_DIR="$STORM/bin"
 STORM_REPO="$HOME/.storm-env"
 MANIFEST="$STORM_REPO/packages.tsv"
+LOG_FILE="$STORM/bootstrap.log"
 
 mkdir -p "$BIN_DIR" "$STORM/share" "$STORM/state" "$STORM/cache" "$HOME/.config"
+
+# Redirect stdout and stderr to both terminal and log file
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "=================================================="
+echo " Storm Sync Started: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "=================================================="
 
 # Link Neovim configuration into persistent HOME
 if [ -d "$STORM_REPO/nvim" ] && [ ! -L "$HOME/.config/nvim" ]; then
@@ -131,8 +139,6 @@ install_neovim() {
     fi
 }
 
-echo "=== Storm Package Sync ==="
-
 install_neovim
 
 if [ -f "$MANIFEST" ]; then
@@ -164,3 +170,4 @@ if [ -f "$BIN_DIR/nvim" ]; then
 fi
 
 echo "=== Sync Complete ==="
+echo " Log written to: $LOG_FILE"
