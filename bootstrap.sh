@@ -50,11 +50,16 @@ install_github_bin() {
         return
     fi
 
-    if [[ "$url" == *.tar.gz ]] || [[ "$url" == *.tgz ]]; then
+if [[ "$url" == *.tar.gz ]] || [[ "$url" == *.tgz ]]; then
         local tmp_extract="/tmp/storm-extract-$name"
         mkdir -p "$tmp_extract"
         curl -sL "$url" | tar -xzf - -C "$tmp_extract" 2>/dev/null
-        find "$tmp_extract" -type f -name "$name" -exec mv {} "$BIN_DIR/" \; 2>/dev/null
+        # Search recursively for the binary inside extracted subfolders
+        local bin_path
+        bin_path=$(find "$tmp_extract" -type f -name "$name" | head -n 1)
+        if [ -n "$bin_path" ]; then
+            mv "$bin_path" "$BIN_DIR/$name"
+        fi
         rm -rf "$tmp_extract"
     elif [[ "$url" == *.zip ]]; then
         local tmp_zip="/tmp/$USER-storm-$name.zip"
@@ -105,4 +110,5 @@ if [ -f "$BIN_DIR/nvim" ]; then
     echo " [✓] Neovim configuration synced."
 fi
 
+install_github_bin "fastfetch" "fastfetch-cli/fastfetch" "fastfetch-linux-amd64.tar.gz"
 echo "=== Sync Complete ==="
