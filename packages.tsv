@@ -1,0 +1,7 @@
+tmux	nolanopt/tmux-builds	tmux-.*-x86_64
+rg	BurntSushi/ripgrep	x86_64-unknown-linux-musl.tar.gz
+lazygit	jesseduffield/lazygit	Linux_x86_64|linux_x86_64
+fzf	junegunn/fzf	linux_amd64.tar.gz
+eza	eza-community/eza	x86_64-unknown-linux-gnu.tar.gz
+jq	jqlang/jq	jq-linux-x86_64
+fastfetch	fastfetch-cli/fastfetch	fastfetch-linux-amd64.tar.gz
