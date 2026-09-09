@@ -37,7 +37,9 @@ cmd_add() {
         exit 1
     fi
 
-    if grep -q "^${name}\t" "$MANIFEST" 2>/dev/null; then
+    # Exact first-field match via awk. grep/sed with an interpolated name treat
+    # it as a regex, so "c++" or "lib.foo" would match unintended rows.
+    if awk -F'\t' -v n="$name" '$1 == n { f = 1 } END { exit !f }' "$MANIFEST" 2>/dev/null; then
         echo "Package '$name' is already declared."
         exit 1
     fi
@@ -47,25 +49,45 @@ cmd_add() {
     printf "%s\t%s\t%s\n" "$name" "$repo" "$pattern" >> "$MANIFEST"
     
     echo " [+] Added $name ($repo) to manifest"
-    read -p "Commit and push to GitHub now? (y/N) " -n 1 -r
-    echo
-    [[ $REPLY =~ ^[Yy]$ ]] && cmd_sync "Add $name package"
+    # Use an explicit `if`, not `[[ ]] && cmd`: as the last statement a failed
+    # test makes the function exit 1, so `storm-pkg add x && ...` silently
+    # skips everything after it when you decline the prompt.
+    if [ -t 0 ]; then
+        read -r -p "Commit and push to GitHub now? (y/N) " -n 1
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            cmd_sync "Add $name package"
+        fi
+    else
+        echo " (non-interactive -- run 'storm-pkg sync' to commit and push)"
+    fi
 }
 
 cmd_remove() {
     local name="$1"
-    if ! grep -q "^${name}\t" "$MANIFEST" 2>/dev/null; then
+    if [ -z "$name" ]; then
+        echo "Error: Missing package name."
+        exit 1
+    fi
+    if ! awk -F'\t' -v n="$name" '$1 == n { f = 1 } END { exit !f }' "$MANIFEST" 2>/dev/null; then
         echo "Package '$name' not found."
         exit 1
     fi
 
-    # Safely delete line starting with exact name
-    sed -i "/^${name}\t/d" "$MANIFEST"
+    # Rewrite without the matching row (exact field compare, not a regex).
+    local tmp="$MANIFEST.tmp"
+    awk -F'\t' -v n="$name" '$1 != n' "$MANIFEST" > "$tmp" && mv "$tmp" "$MANIFEST"
     echo " [-] Removed $name from manifest"
 
-    read -p "Commit and push to GitHub now? (y/N) " -n 1 -r
-    echo
-    [[ $REPLY =~ ^[Yy]$ ]] && cmd_sync "Remove $name package"
+    if [ -t 0 ]; then
+        read -r -p "Commit and push to GitHub now? (y/N) " -n 1
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            cmd_sync "Remove $name package"
+        fi
+    else
+        echo " (non-interactive -- run 'storm-pkg sync' to commit and push)"
+    fi
 }
 
 cmd_sync() {

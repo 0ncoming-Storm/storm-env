@@ -28,16 +28,20 @@ If you want this:
    git clone https://github.com/YOUR-USERNAME/storm-env.git ~/.storm-env
    ```
 
-2. **Change the hardcoded username in the scripts.** `storm_bashrc` contains paths that are mine,
-   not yours:
+2. **Audit every path the scripts touch.** They should all be derived from `$USER`, `$HOME` or
+   `$STORM_REPO` now, but check before trusting them — an earlier revision of this repo hardcoded
+   a foreign username into `storm-clean`'s `rm -rf`. Grep for it yourself:
 
-   | Line | Current | Change to |
-   |---|---|---|
-   | `storm_bashrc:91` | `rm -rf /tmp/lorba197*` | `rm -rf /tmp/$USER-storm*` |
-   | `storm_bashrc:90` | `rm -rf .storm-env` (relative to your cwd) | `rm -rf "$STORM_REPO"` |
-   | `bootstrap.sh:6` | `STORM_REPO="$HOME/.storm-env"` | only if you clone elsewhere |
+   ```bash
+   grep -rn 'rm -rf' *.sh storm-pkg storm_bashrc
+   ```
 
-   The `storm-clean` function is a `rm -rf` with no confirmation. Read it before you run it.
+   Every path should read `$USER`, `$HOME`, `$STORM` or `$STORM_REPO`. If you see a literal
+   username, stop and fix it. `storm-clean` deletes `$STORM_REPO` and `$STORM` and now asks for
+   confirmation first — but it is still a recursive delete, so read it before running it.
+
+   If you clone somewhere other than `~/.storm-env`, `export STORM_REPO=/your/path` before
+   sourcing. Both shell files default it to `$HOME/.storm-env`.
 
 3. **Decide what to do with upstream.** Either drop the remote entirely
    (`git remote remove origin`) so nothing auto-pulls, or keep it as `upstream` and pull
@@ -67,9 +71,10 @@ EOF
 exec bash
 ```
 
-`export STORM_REPO` is not optional. It's referenced throughout `storm_bashrc` and `init.sh` but
-only ever defined locally inside `bootstrap.sh`, so if you skip it your `PATH` gets an empty entry
-and the auto-rebuild path resolves to `/bootstrap.sh`.
+`export STORM_REPO` is optional — both shell files now default it to `$HOME/.storm-env` and export
+it — but set it explicitly if you clone anywhere else. Older revisions used it in 15 places while
+defining it nowhere, which left an empty `PATH` entry and resolved the auto-rebuild to
+`/bootstrap.sh`.
 
 First run takes a few minutes — it pulls eight GitHub releases, clones Neovim plugins, and
 optionally compiles the tree-sitter CLI.
@@ -102,7 +107,7 @@ Everything except Neovim and tree-sitter is declared in `packages.tsv`:
 
 | Package | Source | Why |
 |---|---|---|
-| `tmux` | `axetroy/tmux-builds` | Static builds; portable session persistence over SSH |
+| `tmux` | `axetroy/tmux-builds` | **Broken** — see Known quirks |
 | `rg` | `BurntSushi/ripgrep` | Search |
 | `lazygit` | `jesseduffield/lazygit` | Git TUI |
 | `fzf` | `junegunn/fzf` | Fuzzy finding |
@@ -246,19 +251,54 @@ the end of every sync, but it's silenced with `|| true`.
 **Everything is broken** — `storm-rebuild` wipes `/tmp/$USER-storm` and reinstalls from scratch.
 Nothing you care about lives there.
 
-## Known quirks
+## Known issues
 
-Things that are rough edges rather than features:
+### Open
 
-- `storm_bashrc:91` hardcodes `/tmp/lorba197*`. This is the username-leak the fork warning is
-  about — fix it before running `storm-clean` on a shared machine.
-- `storm_bashrc:90` runs `rm -rf .storm-env` relative to your current directory, not `$STORM_REPO`.
-- `bootstrap.sh` installs the tree-sitter CLI, while `no-treesitter.lua` disables
-  `nvim-treesitter`. The CLI install is currently wasted work.
-- `remote.lua` disables `echasnovski/mini.animate` while `mini-animate.lua` installs
-  `nvim-mini/mini.animate`. Only the latter takes effect.
-- `$STORM_REPO` is used everywhere but defined nowhere outside `bootstrap.sh`. Export it yourself.
-- There is no test suite and no CI. Verification is `bash -n` on the four scripts and running them.
+- **`tmux` does not install.** `axetroy/tmux-builds` returns HTTP 404 from the GitHub API — the
+  repo is gone. `get_download_url` fails both the API call and the HTML scrape, so bootstrap prints
+  `[X] Failed to fetch download URL for tmux` and moves on. Nothing else breaks (the tmux
+  auto-attach is guarded by `command -v tmux`), but the manifest row is dead weight. There is no
+  drop-in replacement: `nelsonenzo/tmux-appimage` ships `tmux.appimage` (needs FUSE, often
+  unavailable on locked-down lab machines), and `tmux/tmux` publishes only a source tarball.
+  **This needs a decision** — pin a maintained static build, or drop the row.
+- **tree-sitter is installed and then unused.** `bootstrap.sh` builds the CLI via npm or cargo
+  while `no-treesitter.lua` disables `nvim-treesitter` entirely. Pick one.
+- **`mini.animate` is configured twice.** `mini-animate.lua` installs `nvim-mini/mini.animate`;
+  `remote.lua` disables `echasnovski/mini.animate`. Only the former has any effect.
+- **`example.lua` is 190 lines of dead code.** It returns an empty spec on line 3.
+- **`init.sh` duplicates `storm_bashrc`** and nothing sources it — the only reference is
+  `storm-pkg`'s `git add` list. They will drift. Delete one.
+- **No integrity checking.** Downloads are neither checksum- nor signature-verified, despite
+  ripgrep publishing `.sha256` files alongside every asset.
+- **The auto-rebuild blocks your shell.** If `/tmp` was wiped, the first shell after login sits in
+  `bootstrap.sh` for minutes before giving you a prompt.
+- **No test suite and no CI.** Verification is `bash -n` plus targeted tests of changed paths.
+- **No license at the repository root.**
+
+### Fixed
+
+Each of these was verified by test, not just by reading:
+
+- `storm-clean` hardcoded `/tmp/lorba197*` — a foreign username — and `rm -rf .storm-env` relative
+  to your cwd. Now uses `$STORM` and `$STORM_REPO`, and confirms first.
+- `curl -sL` had no `--fail`. A 404 exits 0 and writes its error body, so a failed download became
+  a 9-byte executable that was `chmod +x`'d and then skipped forever as "already installed". All
+  fetches now use `-fsSL` and validate before promoting.
+- A dangling `~/.config/nvim` symlink passes `[ -L ]`, so once broken it was never relinked.
+- The relink branch ran `rm -rf "$HOME/.config/nvim"`, destroying a pre-existing config. Now
+  backed up with a timestamp.
+- `while read` on a manifest without a trailing newline silently dropped the last package.
+- `exec tmux` fired on non-interactive SSH, breaking `scp`, `sftp`, `rsync` and git-over-ssh.
+- `GREP_OPTIONS` has been ignored since grep 2.21.
+- Re-sourcing appended a duplicate copy of every `PATH` entry.
+- `alias ls=eza` applied even when `eza` was missing, leaving no `ls` at all.
+- `storm-pkg remove` interpolated the package name into a `sed` regex — `lib.foo` also deleted
+  `libXfoo`. Now an exact `awk` field compare.
+- `bootstrap.log` grew without bound; now rotated to `.log.old`.
+- `bind` warned "line editing not enabled" on every non-interactive source.
+- `storm-pkg add`/`remove` exited 1 when you declined the push prompt (`[[ ]] && cmd` as the last
+  statement), so `storm-pkg add x && ...` silently skipped everything after it.
 
 ## License
 

@@ -5,7 +5,8 @@
 # ENVIRONMENT & ALIASES
 # ==============================================================================
 export CLICOLOR=1
-export GREP_OPTIONS='--color=auto'
+# NOTE: GREP_OPTIONS was removed here. grep >= 2.21 no longer honours it (GNU
+# grep 3.8 silently ignores it). Use the `grep --color=auto` alias below instead.
 PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 
 alias ls='ls --color=auto'
@@ -23,13 +24,20 @@ build() { g++ -Wall -Wextra "$1".cpp -o "$1" && ./"$1"; }
 mkcd() { mkdir -p "$1" && cd "$1"; }
 
 # History setup
-bind '"\e[A": history-search-backward'
-bind '"\e[B": history-search-forward'
 export HISTSIZE=10000
 export HISTFILESIZE=20000
 export HISTCONTROL=ignoreboth:erasedups
 shopt -s histappend cdspell
-bind 'set completion-ignore-case on'
+
+# readline bindings only make sense in an interactive shell; running them
+# otherwise prints "bind: warning: line editing not enabled" on every ssh cmd.
+case "$-" in
+  *i*)
+    bind '"\e[A": history-search-backward'
+    bind '"\e[B": history-search-forward'
+    bind 'set completion-ignore-case on'
+    ;;
+esac
 
 # ==============================================================================
 # SCHOOL OVERRIDES
@@ -56,8 +64,20 @@ script() {
 # ==============================================================================
 # /TMP STORM ENVIRONMENT DEPLOYMENT
 # ==============================================================================
+# STORM_REPO is used everywhere below and by bootstrap.sh, but was never defined
+# outside bootstrap.sh itself. Default it here and export it so child processes
+# (including bootstrap.sh) inherit it. Override before sourcing to relocate.
+: "${STORM_REPO:=$HOME/.storm-env}"
+export STORM_REPO
+
 export STORM="/tmp/$USER-storm"
-export PATH="$STORM/bin:$STORM_REPO:$HOME/.local/bin:$HOME/bin:$PATH"
+
+# Prepend without duplicating: storm-update/storm-rebuild re-source this file,
+# and an unguarded PATH= grows a new copy of every entry each time.
+case ":$PATH:" in
+  *":$STORM/bin:"*) ;;
+  *) export PATH="$STORM/bin:$STORM_REPO:$HOME/.local/bin:$HOME/bin:$PATH" ;;
+esac
 
 # Persist config in HOME, but push heavy data/plugins/cache to /tmp
 export XDG_CONFIG_HOME="$HOME/.config"
@@ -65,9 +85,11 @@ export XDG_DATA_HOME="$STORM/share"
 export XDG_STATE_HOME="$STORM/state"
 export XDG_CACHE_HOME="$STORM/cache"
 
-alias vim="nvim"
-alias ls="eza"
-alias lg="lazygit"
+# Only alias to tools that actually exist. If bootstrap failed, an unconditional
+# `alias ls=eza` leaves you with no `ls` at all.
+command -v nvim    >/dev/null 2>&1 && alias vim="nvim"
+command -v eza     >/dev/null 2>&1 && alias ls="eza"
+command -v lazygit >/dev/null 2>&1 && alias lg="lazygit"
 
 storm-update() {
   echo "Updating Storm repository..."
@@ -86,9 +108,26 @@ storm-logs() {
   fi
 }
 
-storm-clean(){
-  rm -rf .storm-env
-  rm -rf /tmp/lorba197*
+storm-clean() {
+  # Remove ONLY this user's Storm paths. Never hardcode a username here, and
+  # never use a relative path -- `rm -rf .storm-env` deletes whatever happens
+  # to be named that in the current directory.
+  local repo="${STORM_REPO:-$HOME/.storm-env}"
+
+  echo -e "\033[1;33m[Storm] About to delete:\033[0m"
+  echo "  $repo"
+  echo "  $STORM"
+  read -r -p "Proceed? This cannot be undone. (y/N) " -n 1 -r
+  echo
+  [[ $REPLY =~ ^[Yy]$ ]] || { echo "Aborted."; return 1; }
+
+  rm -rf "$repo"
+  rm -rf "$STORM"
+
+  # The nvim symlink now points at nothing; drop it so bootstrap can relink.
+  [ -L "$HOME/.config/nvim" ] && rm -f "$HOME/.config/nvim"
+
+  echo -e "\033[1;32m[✓] Storm removed. Re-clone and run bootstrap.sh to reinstall.\033[0m"
 }
 storm-rebuild() {
   echo -e "\033[1;33m[Storm] Wiping /tmp environment...\033[0m"
@@ -119,8 +158,14 @@ if [ ! -d "$STORM/bin" ]; then
 fi
 
 # Auto-start Tmux on SSH
-if [ -n "$SSH_CONNECTION" ] && [ -z "$TMUX" ]; then
-  if command -v tmux >/dev/null 2>&1; then
-    exec tmux new-session -A -s main
-  fi
-fi
+# Guarded on interactivity: bash also sources .bashrc for `ssh host <cmd>`, and
+# an unguarded `exec tmux` breaks scp, sftp, rsync and git-over-ssh.
+case "$-" in
+  *i*)
+    if [ -n "$SSH_CONNECTION" ] && [ -z "$TMUX" ] && [ "$TERM" != "dumb" ]; then
+      if command -v tmux >/dev/null 2>&1; then
+        exec tmux new-session -A -s main
+      fi
+    fi
+    ;;
+esac

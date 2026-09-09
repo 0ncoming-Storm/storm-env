@@ -1,8 +1,16 @@
 #!/bin/bash
-# init.sh - Storm Environment setup
+# init.sh - Storm Environment setup (minimal alternative to storm_bashrc)
+
+: "${STORM_REPO:=$HOME/.storm-env}"
+export STORM_REPO
 
 export STORM="/tmp/$USER-storm"
-export PATH="$STORM/bin:$STORM_REPO:$PATH"
+
+# Prepend without duplicating -- this file may be sourced more than once.
+case ":$PATH:" in
+  *":$STORM/bin:"*) ;;
+  *) export PATH="$STORM/bin:$STORM_REPO:$PATH" ;;
+esac
 
 # Persist configs in HOME, but push heavy data/plugins/cache to /tmp
 export XDG_CONFIG_HOME="$HOME/.config"
@@ -17,10 +25,10 @@ if [ ! -d "$STORM/bin" ]; then
   bash "$STORM_REPO/bootstrap.sh"
 fi
 
-# Tool Aliases
-alias vim="nvim"
-alias ls="eza"
-alias lg="lazygit"
+# Tool Aliases -- only for binaries that actually exist
+command -v nvim    >/dev/null 2>&1 && alias vim="nvim"
+command -v eza     >/dev/null 2>&1 && alias ls="eza"
+command -v lazygit >/dev/null 2>&1 && alias lg="lazygit"
 
 storm-update() {
   echo "Updating Storm repository..."
@@ -36,7 +44,11 @@ storm-rebuild() {
   bash "$STORM_REPO/bootstrap.sh"
 }
 
-# Auto-start Tmux on SSH
-if [ -n "$SSH_CONNECTION" ] && [ -z "$TMUX" ] && command -v tmux >/dev/null 2>&1; then
-  exec tmux new-session -A -s main
-fi
+# Auto-start Tmux on SSH -- interactive shells only, or scp/sftp/rsync break
+case "$-" in
+  *i*)
+    if [ -n "$SSH_CONNECTION" ] && [ -z "$TMUX" ] && [ "$TERM" != "dumb" ]; then
+      command -v tmux >/dev/null 2>&1 && exec tmux new-session -A -s main
+    fi
+    ;;
+esac
