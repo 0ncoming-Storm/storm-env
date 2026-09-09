@@ -79,9 +79,24 @@ storm-update() {
 }
 
 storm-rebuild() {
-  echo "Wiping and rebuilding Storm binaries in /tmp..."
+  echo -e "\033[1;33m[Storm] Wiping /tmp environment...\033[0m"
   rm -rf "$STORM"
+
+  if [ -d "$STORM_REPO" ]; then
+    echo -e "\033[1;34m[Git] Pulling latest repository updates...\033[0m"
+    git -C "$STORM_REPO" pull
+  fi
+
+  echo -e "\033[1;34m[Storm] Executing bootstrap installer...\033[0m"
   bash "$STORM_REPO/bootstrap.sh"
+
+  echo -e "\033[1;32m[Storm] Reloading shell configuration...\033[0m"
+  if [ -f "$STORM_REPO/storm_bashrc" ]; then
+    source "$STORM_REPO/storm_bashrc"
+  elif [ -f "$HOME/.bashrc" ]; then
+    source "$HOME/.bashrc"
+  fi
+  echo -e "\033[1;32m[✓] Environment refresh complete!\033[0m"
 }
 
 # Auto-Build /tmp Environment if wiped
