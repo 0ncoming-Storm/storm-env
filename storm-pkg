@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# storm-pkg: Universal Binary & Archive Package Downloader / Installer
-# Handles single executables, .gz, .tar.gz, .tgz, .zip, and raw binaries.
+# storm-pkg: Interactive & Automated Binary Package Manager
 # ==============================================================================
 
 set -euo pipefail
@@ -14,13 +13,15 @@ mkdir -p "$BIN_DIR"
 
 usage() {
     cat <<EOF
-Usage: storm-pkg install <name> <download_url> [binary_name_inside_archive]
+Storm Package Manager (storm-pkg)
 
-Examples:
-  storm-pkg install tree-sitter https://github.com/tree-sitter/tree-sitter/releases/download/v0.22.6/tree-sitter-linux-x64.gz
-  storm-pkg install nvim https://github.com/neovim/neovim/releases/download/v0.10.0/nvim-linux64.tar.gz nvim
+Usage:
+  storm-pkg                        (Interactive mode)
+  storm-pkg install <name> <url> [bin_name]
+  storm-pkg list
+  storm-pkg remove <name>
+
 EOF
-    exit 1
 }
 
 decompress_and_install() {
@@ -29,7 +30,6 @@ decompress_and_install() {
     local bin_in_archive="${3:-$name}"
     local dest="${BIN_DIR}/${name}"
     
-    # Initialize tmp_dir safely before setting trap
     local tmp_dir=""
     tmp_dir="$(mktemp -d)"
     trap 'if [[ -n "${tmp_dir:-}" && -d "${tmp_dir:-}" ]]; then rm -rf "$tmp_dir"; fi' EXIT
@@ -41,7 +41,6 @@ decompress_and_install() {
 
     curl -sSL "$url" -o "$download_path"
 
-    # Detect file type via file command
     local file_type
     file_type="$(file -b "$download_path")"
 
@@ -72,9 +71,6 @@ decompress_and_install() {
                 unxz -c "$download_path" > "$dest"
             fi
             ;;
-        *ELF*)
-            cp "$download_path" "$dest"
-            ;;
         *)
             cp "$download_path" "$dest"
             ;;
@@ -104,13 +100,67 @@ find_and_install() {
     fi
 }
 
+list_packages() {
+    echo "Installed binaries in ${BIN_DIR}:"
+    ls -lh "${BIN_DIR}"
+}
+
+remove_package() {
+    local name="$1"
+    if [[ -f "${BIN_DIR}/${name}" ]]; then
+        rm -f "${BIN_DIR}/${name}"
+        echo "✔ Removed ${name}"
+    else
+        echo "Package ${name} is not installed."
+    fi
+}
+
+interactive_menu() {
+    echo "================================="
+    echo "     storm-pkg Interactive Menu   "
+    echo "================================="
+    echo "1) List installed binaries"
+    echo "2) Install a package from URL"
+    echo "3) Remove a binary"
+    echo "4) Exit"
+    echo -n "Select an option [1-4]: "
+    read -r choice
+
+    case "$choice" in
+        1) list_packages ;;
+        2)
+            echo -n "Enter package name (e.g., fzf): "
+            read -r p_name
+            echo -n "Enter package download URL: "
+            read -r p_url
+            decompress_and_install "$p_name" "$p_url"
+            ;;
+        3)
+            echo -n "Enter binary name to remove: "
+            read -r p_name
+            remove_package "$p_name"
+            ;;
+        4) exit 0 ;;
+        *) echo "Invalid option." ;;
+    esac
+}
+
+# Main Command Dispatcher
 case "${1:-}" in
+    "")
+        interactive_menu
+        ;;
     install)
         shift
-        if [[ $# -lt 2 ]]; then
-            usage
-        fi
+        if [[ $# -lt 2 ]]; then usage; fi
         decompress_and_install "$@"
+        ;;
+    list)
+        list_packages
+        ;;
+    remove)
+        shift
+        remove_package "$1"
         ;;
     *)
         usage
