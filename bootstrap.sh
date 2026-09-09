@@ -105,5 +105,4 @@ if [ -f "$BIN_DIR/nvim" ]; then
     echo " [✓] Neovim configuration synced."
 fi
 
-install_github_bin "fastfetch" "fastfetch-cli/fastfetch" "fastfetch-linux-amd64.tar.gz"
 echo "=== Sync Complete ==="
