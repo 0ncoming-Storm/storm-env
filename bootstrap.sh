@@ -86,4 +86,5 @@ install_github_bin "fzf" "junegunn/fzf" "linux_amd64.tar.gz"
 install_github_bin "eza" "eza-community/eza" "x86_64-unknown-linux-gnu.tar.gz"
 install_github_bin "jq" "jqlang/jq" "jq-linux-x86_64"
 
+install_github_bin "tree-sitter" "tree-sitter/tree-sitter" "tree-sitter-linux-x64.gz"
 echo "=== Sync Complete ==="
