@@ -1,103 +1,99 @@
-#!/bin/bash
-# bootstrap.sh - Storm Package Manager
+#!/usr/bin/env bash
 
-STORM="/tmp/$USER-storm"
-BIN_DIR="$STORM/bin"
+# ==============================================================================
+# Environment Bootstrap Script
+# ==============================================================================
 
-mkdir -p "$BIN_DIR" "$STORM/config" "$STORM/share" "$STORM/state" "$STORM/cache"
+set -euo pipefail
 
-# Link Neovim configuration from repo
-if [ -d "$STORM/repo/nvim" ]; then
-    rm -rf "$STORM/config/nvim"
-    ln -sf "$STORM/repo/nvim" "$STORM/config/nvim"
+# Define storm directories
+export STORM_PREFIX="/tmp/${USER}-storm"
+export BIN_DIR="${STORM_PREFIX}/bin"
+export PATH="${BIN_DIR}:${PATH}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STORM_PKG="${SCRIPT_DIR}/storm-pkg"
+
+echo "=================================================="
+echo " Bootstrapping Environment into: ${STORM_PREFIX}"
+echo "=================================================="
+
+# Ensure structure exists
+mkdir -p "${BIN_DIR}"
+mkdir -p "${STORM_PREFIX}/share"
+mkdir -p "${STORM_PREFIX}/lib"
+
+# Guarantee storm-pkg is executable
+if [[ -f "$STORM_PKG" ]]; then
+    chmod +x "$STORM_PKG"
+else
+    echo "Error: storm-pkg not found in ${SCRIPT_DIR}" >&2
+    exit 1
 fi
 
-# Link storm-pkg CLI helper
-if [ -f "$STORM/repo/storm-pkg" ]; then
-    ln -sf "$STORM/repo/storm-pkg" "$BIN_DIR/storm-pkg"
-fi
+# ------------------------------------------------------------------------------
+# 1. Binary Dependencies Installation (Auto-decompressing)
+# ------------------------------------------------------------------------------
 
-# Special Installer for Neovim (Preserves runtime files)
-install_neovim() {
-    if [ -f "$BIN_DIR/nvim" ]; then
-        echo " [✓] nvim is installed"
-        return
+echo "--> Installing binaries via storm-pkg..."
+
+# Tree-sitter CLI (.gz archive)
+"$STORM_PKG" install tree-sitter \
+  "https://github.com/tree-sitter/tree-sitter/releases/latest/download/tree-sitter-linux-x64.gz"
+
+# Neovim AppImage or Tarball (.tar.gz)
+"$STORM_PKG" install nvim \
+  "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz" \
+  "nvim"
+
+# Ripgrep (.tar.gz)
+"$STORM_PKG" install rg \
+  "https://github.com/BurntSushi/ripgrep/releases/download/14.1.0/ripgrep-14.1.0-x86_64-unknown-linux-musl.tar.gz" \
+  "rg"
+
+# FD (.tar.gz)
+"$STORM_PKG" install fd \
+  "https://github.com/sharkdp/fd/releases/download/v10.1.0/fd-v10.1.0-x86_64-unknown-linux-musl.tar.gz" \
+  "fd"
+
+
+# ------------------------------------------------------------------------------
+# 2. Universal Sanity Check and Verification
+# ------------------------------------------------------------------------------
+
+echo "--> Verifying installed executables in ${BIN_DIR}..."
+
+for binary in "${BIN_DIR}"/*; do
+    if [[ -f "$binary" ]]; then
+        bin_name="$(basename "$binary")"
+        file_info="$(file -b "$binary")"
+
+        if echo "$file_info" | grep -q "ELF"; then
+            echo " [OK] ${bin_name}: Valid ELF executable"
+        else
+            echo " [WARNING] ${bin_name} is not an ELF executable! (Detected: ${file_info})"
+            echo " Attempting emergency decompression..."
+            
+            # Emergency fallback logic
+            if echo "$file_info" | grep -q "gzip"; then
+                mv "$binary" "${binary}.gz"
+                gunzip "${binary}.gz"
+                chmod +x "$binary"
+                echo " [FIXED] Decompressed ${bin_name}"
+            fi
+        fi
     fi
+done
 
-    echo " [↓] Installing Neovim..."
-    local url="https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz"
-    
-    mkdir -p "$STORM/nvim-app"
-    curl -sL "$url" | tar -xzf - -C "$STORM/nvim-app" --strip-components=1
-    
-    # Symlink binary into execution PATH
-    ln -sf "$STORM/nvim-app/bin/nvim" "$BIN_DIR/nvim"
-}
+# ------------------------------------------------------------------------------
+# 3. Environment Exports Setup
+# ------------------------------------------------------------------------------
 
-# Generic Installer for single-binary utilities
-install_github_bin() {
-    local name="$1"
-    local repo="$2"
-    local pattern="$3"
-    
-    if command -v "$name" >/dev/null 2>&1 || [ -f "$BIN_DIR/$name" ]; then
-        echo " [✓] $name is installed"
-        return
-    fi
-
-    echo " [↓] Installing $name from $repo..."
-    local url
-    url=$(curl -s "https://api.github.com/repos/$repo/releases/latest" | \
-          grep "browser_download_url" | grep -E "$pattern" | cut -d '"' -f 4 | head -n 1)
-
-    if [ -z "$url" ]; then
-        echo " [X] Failed to fetch URL for $name"
-        return
-    fi
-
-    if [[ "$url" == *.tar.gz ]] || [[ "$url" == *.tgz ]]; then
-        local tmp_extract="/tmp/storm-extract-$name"
-        mkdir -p "$tmp_extract"
-        curl -sL "$url" | tar -xzf - -C "$tmp_extract" 2>/dev/null
-        find "$tmp_extract" -type f -name "$name" -exec mv {} "$BIN_DIR/" \; 2>/dev/null
-        rm -rf "$tmp_extract"
-    elif [[ "$url" == *.zip ]]; then
-        local tmp_zip="/tmp/$USER-storm-$name.zip"
-        curl -sL "$url" -o "$tmp_zip"
-        unzip -q -j "$tmp_zip" "*$name*" -d "$BIN_DIR" 2>/dev/null
-        rm -f "$tmp_zip"
-    else
-        curl -sL "$url" -o "$BIN_DIR/$name"
-    fi
-
-    chmod +x "$BIN_DIR/$name" 2>/dev/null
-}
-
-echo "=== Storm Package Sync ==="
-
-# 1. Neovim (Full Runtime Installation)
-install_neovim
-
-# 2. CLI Utilities
-install_github_bin "tmux" "nolanopt/tmux-builds" "tmux-.*-x86_64"
-install_github_bin "rg" "BurntSushi/ripgrep" "x86_64-unknown-linux-musl.tar.gz"
-install_github_bin "lazygit" "jesseduffield/lazygit" "Linux_x86_64|linux_x86_64"
-install_github_bin "fzf" "junegunn/fzf" "linux_amd64.tar.gz"
-install_github_bin "eza" "eza-community/eza" "x86_64-unknown-linux-gnu.tar.gz"
-install_github_bin "jq" "jqlang/jq" "jq-linux-x86_64"
-
-install_github_bin "tree-sitter" "tree-sitter/tree-sitter" "tree-sitter-linux-x64.gz"
-echo "=== Sync Complete ==="
-
-echo "=== Refresh Nvim ==="
-# Automate Neovim sync & plugin install
-if command -v nvim &> /dev/null; then
-    echo "Syncing Neovim plugins..."
-    # Wipe old cached plugin state to prevent leftover conflicts
-    rm -rf "/tmp/${USER}-storm/share/nvim/lazy"
-    
-    # Headless sync (installs/cleans plugins without opening the UI)
-    nvim --headless "+Lazy! sync" +qa
-fi
-
-echo "=== DONE ==="
+echo "--> Environment environment set up complete."
+echo ""
+echo "Run the following command or add it to your ~/.bashrc:"
+echo "export PATH=\"${BIN_DIR}:\$PATH\""
+echo ""
+echo "To test Tree-sitter and Neovim immediately:"
+echo "  /tmp/${USER}-storm/bin/tree-sitter --version"
+echo "  /tmp/${USER}-storm/bin/nvim --headless '+TSUpdateSync' +qa"
