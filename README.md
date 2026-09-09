@@ -249,17 +249,9 @@ Nothing you care about lives there.
 
 ### Open
 
-- **`tmux` does not install.** `axetroy/tmux-builds` returns HTTP 404 from the GitHub API — the
-  repo is gone. `get_download_url` fails both the API call and the HTML scrape, so bootstrap prints
-  `[X] Failed to fetch download URL for tmux` and moves on. Nothing else breaks (the tmux
-  auto-attach is guarded by `command -v tmux`), but the manifest row is dead weight. There is no
-  drop-in replacement: `nelsonenzo/tmux-appimage` ships `tmux.appimage` (needs FUSE, often
-  unavailable on locked-down lab machines), and `tmux/tmux` publishes only a source tarball.
-  **This needs a decision** — pin a maintained static build, or drop the row.
 - **`example.lua` is 190 lines of dead code.** It returns an empty spec on line 3.
 - **No integrity checking.** Downloads are neither checksum- nor signature-verified, despite
   ripgrep publishing `.sha256` files alongside every asset.
 - **The auto-rebuild blocks your shell.** If `/tmp` was wiped, the first shell after login sits in
   `bootstrap.sh` for minutes before giving you a prompt.
 - **No test suite and no CI.** Verification is `bash -n` plus targeted tests of changed paths.
-- **No license at the repository root.**
