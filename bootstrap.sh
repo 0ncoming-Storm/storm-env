@@ -1,5 +1,5 @@
 #!/bin/bash
-# bootstrap.sh - Storm Package Manager Installer (With Logging)
+# bootstrap.sh - Storm Package Manager Installer (With Logging & Fallbacks)
 
 STORM="/tmp/$USER-storm"
 BIN_DIR="$STORM/bin"
@@ -49,15 +49,13 @@ get_download_url() {
     if [ -z "$url" ]; then
         echo "     [i] Attempting HTML web scrape fallback..." >&2
         
-        # Scrape expanded assets page first, fall back to main releases page
         local html_content
         html_content=$(curl -sL "https://github.com/$repo/releases/latest")
         
-        # Parse download paths using grep/sed across standard asset patterns
         local scraped_path
         scraped_path=$(echo "$html_content" | grep -oE '"/[^"]+/releases/download/[^"]+"' | tr -d '"' | grep -E "$pattern" | head -n 1)
 
-        # Fallback for hidden/expanded assets lists
+        # Fallback for hidden/expanded asset lists
         if [ -z "$scraped_path" ]; then
             local tag
             tag=$(echo "$html_content" | grep -oE '/releases/tag/[^"]+' | head -n 1 | cut -d'/' -f 5)
@@ -77,7 +75,9 @@ get_download_url() {
     fi
 
     echo "$url"
-}install_github_bin() {
+}
+
+install_github_bin() {
     local name="$1"
     local repo="$2"
     local pattern="$3"
@@ -151,6 +151,8 @@ install_neovim() {
     fi
 }
 
+echo "=== Storm Package Sync ==="
+
 install_neovim
 
 if [ -f "$MANIFEST" ]; then
@@ -182,4 +184,3 @@ if [ -f "$BIN_DIR/nvim" ]; then
 fi
 
 echo "=== Sync Complete ==="
-echo " Log written to: $LOG_FILE"
