@@ -1,7 +1,8 @@
 #!/bin/bash
 # storm-pkg - Declarative Package Manager CLI for Storm
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 BOOTSTRAP_FILE="$REPO_DIR/bootstrap.sh"
 STORM_DIR="/tmp/$USER-storm"
 
@@ -21,7 +22,6 @@ usage() {
     exit 1
 }
 
-# Helper to detect if running on the remote storm server environment
 is_remote_env() {
     [[ "$REPO_DIR" == "$STORM_DIR/repo"* ]] || [ -d "$STORM_DIR" ]
 }
