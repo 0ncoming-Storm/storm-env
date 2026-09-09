@@ -1,5 +1,8 @@
+-- Single source of truth for mini.animate.
+-- To disable animations entirely (e.g. over a very slow link), set
+-- `enabled = false` on the nvim-mini spec below.
 return {
-  -- 1. Disable the old repository reference
+  -- 1. Disable the old repository reference (LazyVim still points here)
   {
     "echasnovski/mini.animate",
     enabled = false,

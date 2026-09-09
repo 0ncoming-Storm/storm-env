@@ -95,7 +95,7 @@ cmd_sync() {
     cd "$REPO_DIR" || exit
     
     echo "=== Syncing Manifest & Scripts ==="
-    git add packages.tsv bootstrap.sh init.sh storm-pkg
+    git add packages.tsv bootstrap.sh storm-pkg storm_bashrc
     git commit -m "$msg"
     git push
     

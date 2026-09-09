@@ -204,22 +204,16 @@ else
     echo " [!] Manifest file missing: $MANIFEST"
 fi
 
-if command -v npm >/dev/null 2>&1 && ! [ -f "$BIN_DIR/tree-sitter" ]; then
-    echo " [↓] Installing tree-sitter CLI via npm..."
-    npm install -g --prefix "$STORM" tree-sitter-cli >/dev/null 2>&1 || true
-elif command -v cargo >/dev/null 2>&1 && ! [ -f "$BIN_DIR/tree-sitter" ]; then
-    echo " [↓] Installing tree-sitter CLI via cargo..."
-    cargo install tree-sitter-cli --root "$STORM" >/dev/null 2>&1 || true
-fi
-
-echo " [⚙] Pre-configuring Neovim plugins & treesitter..."
+echo " [⚙] Pre-configuring Neovim plugins..."
 if [ -f "$BIN_DIR/nvim" ]; then
     export XDG_CONFIG_HOME="$HOME/.config"
     export XDG_DATA_HOME="$STORM/share"
     export XDG_STATE_HOME="$STORM/state"
     export XDG_CACHE_HOME="$STORM/cache"
     export PATH="$BIN_DIR:$PATH"
-    "$BIN_DIR/nvim" --headless "+Lazy! sync" "+TSUpdateSync" +qa >/dev/null 2>&1 || true
+    # No +TSUpdateSync: nvim/lua/plugins/no-treesitter.lua disables
+    # nvim-treesitter, so the tree-sitter CLI and parser sync are gone too.
+    "$BIN_DIR/nvim" --headless "+Lazy! sync" +qa >/dev/null 2>&1 || true
     echo " [✓] Neovim synced"
 fi
 

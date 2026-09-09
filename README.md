@@ -76,8 +76,7 @@ it — but set it explicitly if you clone anywhere else. Older revisions used it
 defining it nowhere, which left an empty `PATH` entry and resolved the auto-rebuild to
 `/bootstrap.sh`.
 
-First run takes a few minutes — it pulls eight GitHub releases, clones Neovim plugins, and
-optionally compiles the tree-sitter CLI.
+First run takes a few minutes — it pulls eight GitHub releases and clones the Neovim plugins.
 
 ## Requirements
 
@@ -85,7 +84,6 @@ optionally compiles the tree-sitter CLI.
 |---|---|---|
 | `bash`, `curl`, `git`, `tar` | Yes | Everything |
 | `unzip` | Only for zip-format assets | Some releases ship `.zip` |
-| `npm` **or** `cargo` | Optional | Building the tree-sitter CLI |
 | `GITHUB_TOKEN` | Optional | Avoiding API rate limits |
 | `tmux` | Optional | Auto-attached on SSH once installed |
 
@@ -103,11 +101,11 @@ export GITHUB_TOKEN="ghp_..."   # add to ~/.bashrc to persist
 
 ## What gets installed
 
-Everything except Neovim and tree-sitter is declared in `packages.tsv`:
+Everything except Neovim is declared in `packages.tsv`:
 
 | Package | Source | Why |
 |---|---|---|
-| `tmux` | `axetroy/tmux-builds` | **Broken** — see Known quirks |
+| `tmux` | `axetroy/tmux-builds` | **Broken** — see Known issues |
 | `rg` | `BurntSushi/ripgrep` | Search |
 | `lazygit` | `jesseduffield/lazygit` | Git TUI |
 | `fzf` | `junegunn/fzf` | Fuzzy finding |
@@ -115,19 +113,15 @@ Everything except Neovim and tree-sitter is declared in `packages.tsv`:
 | `jq` | `jqlang/jq` | JSON on the command line |
 | `fastfetch` | `fastfetch-cli/fastfetch` | System info |
 
-Two packages bypass the manifest and are special-cased in `bootstrap.sh`:
-
-- **Neovim** — pinned URL, extracted to `$STORM/nvim-app`, symlinked into `$STORM/bin`.
-- **tree-sitter CLI** — built from `npm install -g tree-sitter-cli` or `cargo install`, whichever
-  toolchain is present.
+**Neovim** bypasses the manifest and is special-cased in `bootstrap.sh`: pinned URL, extracted to
+`$STORM/nvim-app`, symlinked into `$STORM/bin`.
 
 ## Layout
 
 ```
 storm-env/
 ├── bootstrap.sh      # Installer. Idempotent — safe to re-run.
-├── init.sh           # Minimal shell env (aliases + auto-rebuild)
-├── storm_bashrc      # Full shell env (the one to source)
+├── storm_bashrc      # Shell env — the file to source from .bashrc
 ├── storm-pkg         # CLI for editing packages.tsv
 ├── packages.tsv      # The package manifest
 └── nvim/             # LazyVim config, symlinked to ~/.config/nvim
@@ -160,7 +154,7 @@ plugin state somewhere that doesn't count against a home-directory quota.
 | `storm-pkg sync [message]` | Commit, push, and rebuild locally |
 
 `add` and `remove` prompt `Commit and push to GitHub now? (y/N)`. `sync` runs
-`git add packages.tsv bootstrap.sh init.sh storm-pkg`, commits, pushes, and then **re-runs
+`git add packages.tsv bootstrap.sh storm-pkg storm_bashrc`, commits, pushes, and then **re-runs
 `bootstrap.sh`** — expect a few minutes.
 
 ### `storm-*` shell functions
@@ -207,9 +201,9 @@ Custom specs in `nvim/lua/plugins/`:
 
 | File | Purpose |
 |---|---|
-| `remote.lua` | The important one. Disables `noice`, `bufferline`, `flash`, and `mini.animate`; turns off treesitter indentation and `update_in_insert` diagnostics. Cuts keystroke latency over SSH noticeably. |
-| `no-treesitter.lua` | Disables `nvim-treesitter` entirely and falls back to Vim's built-in syntax highlighting. |
-| `mini-animate.lua` | Re-points `mini.animate` at the current `nvim-mini/mini.animate` repo with linear scroll/resize timings. |
+| `remote.lua` | The important one. Disables `noice`, `bufferline` and `flash`, and turns off `update_in_insert` diagnostics. Cuts keystroke latency over SSH noticeably. |
+| `no-treesitter.lua` | Disables `nvim-treesitter` entirely and falls back to Vim's built-in syntax highlighting. Tree-sitter is not used at all — no CLI, no parsers. |
+| `mini-animate.lua` | Single source of truth for `mini.animate`. Re-points it at the current `nvim-mini/mini.animate` repo with linear scroll/resize timings. Flip `enabled = false` here to turn animations off. |
 | `example.lua` | LazyVim's sample spec. **Inert** — it returns early on line 3. |
 
 ## How it works
@@ -262,13 +256,7 @@ Nothing you care about lives there.
   drop-in replacement: `nelsonenzo/tmux-appimage` ships `tmux.appimage` (needs FUSE, often
   unavailable on locked-down lab machines), and `tmux/tmux` publishes only a source tarball.
   **This needs a decision** — pin a maintained static build, or drop the row.
-- **tree-sitter is installed and then unused.** `bootstrap.sh` builds the CLI via npm or cargo
-  while `no-treesitter.lua` disables `nvim-treesitter` entirely. Pick one.
-- **`mini.animate` is configured twice.** `mini-animate.lua` installs `nvim-mini/mini.animate`;
-  `remote.lua` disables `echasnovski/mini.animate`. Only the former has any effect.
 - **`example.lua` is 190 lines of dead code.** It returns an empty spec on line 3.
-- **`init.sh` duplicates `storm_bashrc`** and nothing sources it — the only reference is
-  `storm-pkg`'s `git add` list. They will drift. Delete one.
 - **No integrity checking.** Downloads are neither checksum- nor signature-verified, despite
   ripgrep publishing `.sha256` files alongside every asset.
 - **The auto-rebuild blocks your shell.** If `/tmp` was wiped, the first shell after login sits in
@@ -299,6 +287,14 @@ Each of these was verified by test, not just by reading:
 - `bind` warned "line editing not enabled" on every non-interactive source.
 - `storm-pkg add`/`remove` exited 1 when you declined the push prompt (`[[ ]] && cmd` as the last
   statement), so `storm-pkg add x && ...` silently skipped everything after it.
+- **tree-sitter removed entirely.** `no-treesitter.lua` already disabled `nvim-treesitter`, so the
+  npm/cargo CLI build and the `+TSUpdateSync` parser sync were both wasted work. Gone from
+  `bootstrap.sh`; `npm`/`cargo` are no longer dependencies.
+- **`mini.animate` consolidated.** `remote.lua` disabled `echasnovski/mini.animate` — a repo path
+  `mini-animate.lua` had already retired, making the line a no-op that contradicted the other file.
+  `mini-animate.lua` is now the single source of truth.
+- **`init.sh` deleted.** It duplicated `storm_bashrc` and nothing sourced it. Source
+  `storm_bashrc`.
 
 ## License
 
