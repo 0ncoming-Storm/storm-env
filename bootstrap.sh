@@ -88,3 +88,16 @@ install_github_bin "jq" "jqlang/jq" "jq-linux-x86_64"
 
 install_github_bin "tree-sitter" "tree-sitter/tree-sitter" "tree-sitter-linux-x64.gz"
 echo "=== Sync Complete ==="
+
+echo "=== Refresh Nvim ==="
+# Automate Neovim sync & plugin install
+if command -v nvim &> /dev/null; then
+    echo "Syncing Neovim plugins..."
+    # Wipe old cached plugin state to prevent leftover conflicts
+    rm -rf "/tmp/${USER}-storm/share/nvim/lazy"
+    
+    # Headless sync (installs/cleans plugins without opening the UI)
+    nvim --headless "+Lazy! sync" +qa
+fi
+
+echo "=== DONE ==="
