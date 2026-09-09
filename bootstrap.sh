@@ -74,6 +74,7 @@ echo "=== Storm Package Sync ==="
 install_neovim
 
 # 2. CLI Utilities
+install_github_bin "tmux" "nolanopt/tmux-builds" "tmux-.*-x86_64"
 install_github_bin "rg" "BurntSushi/ripgrep" "x86_64-unknown-linux-musl.tar.gz"
 install_github_bin "lazygit" "jesseduffield/lazygit" "Linux_x86_64|linux_x86_64"
 install_github_bin "fzf" "junegunn/fzf" "linux_amd64.tar.gz"
