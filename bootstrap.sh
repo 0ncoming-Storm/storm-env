@@ -45,15 +45,29 @@ get_download_url() {
         [ -n "$url" ] && echo "     [i] URL resolved via GitHub API" >&2
     fi
 
-    # 2. Fallback to Web Scraping if API failed/rate-limited
+    # 2. Fallback to Robust Web Scraping
     if [ -z "$url" ]; then
         echo "     [i] Attempting HTML web scrape fallback..." >&2
+        
+        # Scrape expanded assets page first, fall back to main releases page
         local html_content
         html_content=$(curl -sL "https://github.com/$repo/releases/latest")
         
+        # Parse download paths using grep/sed across standard asset patterns
         local scraped_path
-        scraped_path=$(echo "$html_content" | grep -oE '/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+/releases/download/[^"]+' | grep -E "$pattern" | head -n 1)
-        
+        scraped_path=$(echo "$html_content" | grep -oE '"/[^"]+/releases/download/[^"]+"' | tr -d '"' | grep -E "$pattern" | head -n 1)
+
+        # Fallback for hidden/expanded assets lists
+        if [ -z "$scraped_path" ]; then
+            local tag
+            tag=$(echo "$html_content" | grep -oE '/releases/tag/[^"]+' | head -n 1 | cut -d'/' -f 5)
+            if [ -n "$tag" ]; then
+                local expanded_html
+                expanded_html=$(curl -sL "https://github.com/$repo/releases/expanded_assets/$tag")
+                scraped_path=$(echo "$expanded_html" | grep -oE '"/[^"]+/releases/download/[^"]+"' | tr -d '"' | grep -E "$pattern" | head -n 1)
+            fi
+        fi
+
         if [ -n "$scraped_path" ]; then
             url="https://github.com$scraped_path"
             echo "     [i] URL resolved via HTML web scrape" >&2
@@ -63,9 +77,7 @@ get_download_url() {
     fi
 
     echo "$url"
-}
-
-install_github_bin() {
+}install_github_bin() {
     local name="$1"
     local repo="$2"
     local pattern="$3"
