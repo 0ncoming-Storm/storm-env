@@ -12,6 +12,11 @@ if [ -d "$STORM/repo/nvim" ]; then
     ln -sf "$STORM/repo/nvim" "$STORM/config/nvim"
 fi
 
+# Link storm-pkg CLI helper
+if [ -f "$STORM/repo/storm-pkg" ]; then
+    ln -sf "$STORM/repo/storm-pkg" "$BIN_DIR/storm-pkg"
+fi
+
 # Special Installer for Neovim (Preserves runtime files)
 install_neovim() {
     if [ -f "$BIN_DIR/nvim" ]; then
