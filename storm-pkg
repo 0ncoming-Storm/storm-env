@@ -28,10 +28,11 @@ decompress_and_install() {
     local url="$2"
     local bin_in_archive="${3:-$name}"
     local dest="${BIN_DIR}/${name}"
-    local tmp_dir
-
+    
+    # Initialize tmp_dir safely before setting trap
+    local tmp_dir=""
     tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' EXIT
+    trap 'if [[ -n "${tmp_dir:-}" && -d "${tmp_dir:-}" ]]; then rm -rf "$tmp_dir"; fi' EXIT
 
     echo "==> Downloading ${name} from ${url}..."
     local filename
@@ -40,7 +41,7 @@ decompress_and_install() {
 
     curl -sSL "$url" -o "$download_path"
 
-    # Detect file type via file command or extension
+    # Detect file type via file command
     local file_type
     file_type="$(file -b "$download_path")"
 
@@ -75,7 +76,6 @@ decompress_and_install() {
             cp "$download_path" "$dest"
             ;;
         *)
-            # Fallback for plain text/shell or uncompressed direct files
             cp "$download_path" "$dest"
             ;;
     esac
@@ -93,7 +93,6 @@ find_and_install() {
     match="$(find "$search_dir" -type f -name "$target_name" | head -n 1)"
 
     if [[ -z "$match" ]]; then
-        # Fallback search for any ELF executable matching target_name
         match="$(find "$search_dir" -type f -executable ! -name "*.sh" | head -n 1)"
     fi
 
