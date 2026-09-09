@@ -1,5 +1,5 @@
 #!/bin/bash
-# bootstrap.sh - Storm Package Manager
+# bootstrap.sh - Storm Package Manager (Fixed Extraction Logic)
 
 STORM="/tmp/$USER-storm"
 BIN_DIR="$STORM/bin"
@@ -18,7 +18,7 @@ install_github_bin() {
     local repo="$2"
     local pattern="$3"
     
-    if command -v "$name" >/dev/null 2>&1; then
+    if command -v "$name" >/dev/null 2>&1 || [ -f "$BIN_DIR/$name" ]; then
         echo " [✓] $name is installed"
         return
     fi
@@ -34,12 +34,18 @@ install_github_bin() {
     fi
 
     if [[ "$url" == *.tar.gz ]] || [[ "$url" == *.tgz ]]; then
-        curl -sL "$url" | tar -xzf - -C "$BIN_DIR" --wildcards "*$name*" --strip-components=1 2>/dev/null || \
-        curl -sL "$url" | tar -xzf - -C "$BIN_DIR" "$name" 2>/dev/null
+        # Extract into a temp directory to cleanly locate and move the binary
+        local tmp_extract="/tmp/storm-extract-$name"
+        mkdir -p "$tmp_extract"
+        curl -sL "$url" | tar -xzf - -C "$tmp_extract" 2>/dev/null
+        
+        # Find the target binary inside the extracted files and move it directly into BIN_DIR
+        find "$tmp_extract" -type f -name "$name" -exec mv {} "$BIN_DIR/" \; 2>/dev/null
+        rm -rf "$tmp_extract"
     elif [[ "$url" == *.zip ]]; then
         local tmp_zip="/tmp/$USER-storm-$name.zip"
         curl -sL "$url" -o "$tmp_zip"
-        unzip -q -j "$tmp_zip" "*$name*" -d "$BIN_DIR"
+        unzip -q -j "$tmp_zip" "*$name*" -d "$BIN_DIR" 2>/dev/null
         rm -f "$tmp_zip"
     else
         curl -sL "$url" -o "$BIN_DIR/$name"
@@ -51,24 +57,24 @@ install_github_bin() {
 echo "=== Storm Package Sync ==="
 
 # ==============================================================================
-# MANIFEST: Add any tools you want here
+# MANIFEST (Fixed patterns)
 # ==============================================================================
 # Neovim
 install_github_bin "nvim" "neovim/neovim" "nvim-linux-x86_64.tar.gz"
 
-# Ripgrep (Grep replacement, required for LazyVim Telescope)
+# Ripgrep
 install_github_bin "rg" "BurntSushi/ripgrep" "x86_64-unknown-linux-musl.tar.gz"
 
-# Lazygit (Terminal Git GUI)
-install_github_bin "lazygit" "jesseduffield/lazygit" "Linux_x86_64.tar.gz"
+# Lazygit (Fixed: lower-case linux_x86_64)
+install_github_bin "lazygit" "jesseduffield/lazygit" "Linux_x86_64|linux_x86_64"
 
-# fzf (Fuzzy finder)
+# fzf
 install_github_bin "fzf" "junegunn/fzf" "linux_amd64.tar.gz"
 
-# eza (Modern ls replacement)
+# eza
 install_github_bin "eza" "eza-community/eza" "x86_64-unknown-linux-gnu.tar.gz"
 
-# jq (JSON processor)
+# jq
 install_github_bin "jq" "jqlang/jq" "jq-linux-x86_64"
 
 echo "=== Sync Complete ==="
