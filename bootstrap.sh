@@ -56,6 +56,9 @@ install_github_bin() {
         curl -sL "$url" | tar -xzf - -C "$tmp_extract" 2>/dev/null
         find "$tmp_extract" -type f -name "$name" -exec mv {} "$BIN_DIR/" \; 2>/dev/null
         rm -rf "$tmp_extract"
+    elif [[ "$url" == *.gz ]]; then
+        # Direct decompression for single gzip files like tree-sitter
+        curl -sL "$url" | gunzip > "$BIN_DIR/$name"
     elif [[ "$url" == *.zip ]]; then
         local tmp_zip="/tmp/$USER-storm-$name.zip"
         curl -sL "$url" -o "$tmp_zip"
@@ -73,12 +76,28 @@ echo "=== Storm Package Sync ==="
 # 1. Neovim (Full Runtime Installation)
 install_neovim
 
-# 2. CLI Utilities
+# 2. CLI Utilities & Tree-Sitter
+install_github_bin "tree-sitter" "tree-sitter/tree-sitter" "tree-sitter-linux-x64.gz"
 install_github_bin "tmux" "nolanopt/tmux-builds" "tmux-.*-x86_64"
 install_github_bin "rg" "BurntSushi/ripgrep" "x86_64-unknown-linux-musl.tar.gz"
 install_github_bin "lazygit" "jesseduffield/lazygit" "Linux_x86_64|linux_x86_64"
 install_github_bin "fzf" "junegunn/fzf" "linux_amd64.tar.gz"
 install_github_bin "eza" "eza-community/eza" "x86_64-unknown-linux-gnu.tar.gz"
 install_github_bin "jq" "jqlang/jq" "jq-linux-x86_64"
+
+# 3. Neovim Automated Headless Configuration & Sync
+echo " [⚙] Pre-configuring Neovim plugins & Tree-sitter parsers..."
+export XDG_CONFIG_HOME="$STORM/config"
+export XDG_DATA_HOME="$STORM/share"
+export XDG_STATE_HOME="$STORM/state"
+export XDG_CACHE_HOME="$STORM/cache"
+export PATH="$BIN_DIR:$PATH"
+
+if [ -f "$BIN_DIR/nvim" ]; then
+    # Headless sync (installs plugins via Lazy/Packer and updates Treesitter)
+    "$BIN_DIR/nvim" --headless "+Lazy! sync" "+TSUpdateSync" +qa >/dev/null 2>&1 || \
+    "$BIN_DIR/nvim" --headless "+PackerSync" +qa >/dev/null 2>&1 || true
+    echo " [✓] Neovim configuration synced."
+fi
 
 echo "=== Sync Complete ==="
