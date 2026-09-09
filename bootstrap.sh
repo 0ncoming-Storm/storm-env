@@ -1,5 +1,5 @@
 #!/bin/bash
-# bootstrap.sh - Storm Package Manager (Fixed Extraction Logic)
+# bootstrap.sh - Storm Package Manager
 
 STORM="/tmp/$USER-storm"
 BIN_DIR="$STORM/bin"
@@ -12,7 +12,24 @@ if [ -d "$STORM/repo/nvim" ]; then
     ln -sf "$STORM/repo/nvim" "$STORM/config/nvim"
 fi
 
-# Generic installer function for GitHub releases
+# Special Installer for Neovim (Preserves runtime files)
+install_neovim() {
+    if [ -f "$BIN_DIR/nvim" ]; then
+        echo " [✓] nvim is installed"
+        return
+    fi
+
+    echo " [↓] Installing Neovim..."
+    local url="https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz"
+    
+    mkdir -p "$STORM/nvim-app"
+    curl -sL "$url" | tar -xzf - -C "$STORM/nvim-app" --strip-components=1
+    
+    # Symlink binary into execution PATH
+    ln -sf "$STORM/nvim-app/bin/nvim" "$BIN_DIR/nvim"
+}
+
+# Generic Installer for single-binary utilities
 install_github_bin() {
     local name="$1"
     local repo="$2"
@@ -34,12 +51,9 @@ install_github_bin() {
     fi
 
     if [[ "$url" == *.tar.gz ]] || [[ "$url" == *.tgz ]]; then
-        # Extract into a temp directory to cleanly locate and move the binary
         local tmp_extract="/tmp/storm-extract-$name"
         mkdir -p "$tmp_extract"
         curl -sL "$url" | tar -xzf - -C "$tmp_extract" 2>/dev/null
-        
-        # Find the target binary inside the extracted files and move it directly into BIN_DIR
         find "$tmp_extract" -type f -name "$name" -exec mv {} "$BIN_DIR/" \; 2>/dev/null
         rm -rf "$tmp_extract"
     elif [[ "$url" == *.zip ]]; then
@@ -56,25 +70,14 @@ install_github_bin() {
 
 echo "=== Storm Package Sync ==="
 
-# ==============================================================================
-# MANIFEST (Fixed patterns)
-# ==============================================================================
-# Neovim
-install_github_bin "nvim" "neovim/neovim" "nvim-linux-x86_64.tar.gz"
+# 1. Neovim (Full Runtime Installation)
+install_neovim
 
-# Ripgrep
+# 2. CLI Utilities
 install_github_bin "rg" "BurntSushi/ripgrep" "x86_64-unknown-linux-musl.tar.gz"
-
-# Lazygit (Fixed: lower-case linux_x86_64)
 install_github_bin "lazygit" "jesseduffield/lazygit" "Linux_x86_64|linux_x86_64"
-
-# fzf
 install_github_bin "fzf" "junegunn/fzf" "linux_amd64.tar.gz"
-
-# eza
 install_github_bin "eza" "eza-community/eza" "x86_64-unknown-linux-gnu.tar.gz"
-
-# jq
 install_github_bin "jq" "jqlang/jq" "jq-linux-x86_64"
 
 echo "=== Sync Complete ==="
