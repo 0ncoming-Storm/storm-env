@@ -85,6 +85,11 @@ storm-logs() {
     echo "No log file found at $log_file"
   fi
 }
+
+storm-clean(){
+  rm -rf .storm-env
+  rm -rf /tmp/lorba197*
+}
 storm-rebuild() {
   echo -e "\033[1;33m[Storm] Wiping /tmp environment...\033[0m"
   rm -rf "$STORM"
