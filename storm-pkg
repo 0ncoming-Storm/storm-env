@@ -1,166 +1,136 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# storm-pkg - Declarative Package Manager CLI for Storm
 
-# ==============================================================================
-# storm-pkg: Interactive & Automated Binary Package Manager
-# ==============================================================================
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+REPO_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+BOOTSTRAP_FILE="$REPO_DIR/bootstrap.sh"
+STORM_DIR="/tmp/$USER-storm"
 
-set -euo pipefail
-
-PREFIX="${STORM_PREFIX:-/tmp/${USER}-storm}"
-BIN_DIR="${PREFIX}/bin"
-
-mkdir -p "$BIN_DIR"
+if [ ! -f "$BOOTSTRAP_FILE" ]; then
+    echo "Error: bootstrap.sh not found in $REPO_DIR"
+    exit 1
+fi
 
 usage() {
-    cat <<EOF
-Storm Package Manager (storm-pkg)
-
-Usage:
-  storm-pkg                        (Interactive mode)
-  storm-pkg install <name> <url> [bin_name]
-  storm-pkg list
-  storm-pkg remove <name>
-
-EOF
+    echo "Usage: storm-pkg <command> [args]"
+    echo ""
+    echo "Commands:"
+    echo "  list                      List all declared packages"
+    echo "  add <name> <repo> <pat>   Add a new GitHub binary package"
+    echo "  remove <name>             Remove a package declaration"
+    echo "  sync [commit_message]     Push local changes or pull & refresh on remote"
+    exit 1
 }
 
-decompress_and_install() {
+is_remote_env() {
+    [[ "$REPO_DIR" == "$STORM_DIR/repo"* ]] || [ -d "$STORM_DIR" ]
+}
+
+cmd_list() {
+    echo "=== Declared Packages in bootstrap.sh ==="
+    grep -E 'install_github_bin|install_neovim' "$BOOTSTRAP_FILE" | grep -v '^\s*#' | while read -r line; do
+        if echo "$line" | grep -q "install_neovim"; then
+            echo "  • neovim (custom installer)"
+        else
+            pkg=$(echo "$line" | cut -d'"' -f2)
+            repo=$(echo "$line" | cut -d'"' -f4)
+            echo "  • $pkg ($repo)"
+        fi
+    done
+}
+
+cmd_add() {
     local name="$1"
-    local url="$2"
-    local bin_in_archive="${3:-$name}"
-    local dest="${BIN_DIR}/${name}"
-    
-    local tmp_dir=""
-    tmp_dir="$(mktemp -d)"
-    trap 'if [[ -n "${tmp_dir:-}" && -d "${tmp_dir:-}" ]]; then rm -rf "$tmp_dir"; fi' EXIT
+    local repo="$2"
+    local pattern="$3"
 
-    echo "==> Downloading ${name} from ${url}..."
-    local filename
-    filename="$(basename "$url")"
-    local download_path="${tmp_dir}/${filename}"
-
-    curl -sSL "$url" -o "$download_path"
-
-    local file_type
-    file_type="$(file -b "$download_path")"
-
-    echo "==> Extracting and installing ${name}..."
-
-    case "$file_type" in
-        *gzip*)
-            if [[ "$download_path" == *.tar.gz || "$download_path" == *.tgz ]]; then
-                tar -xzf "$download_path" -C "$tmp_dir"
-                find_and_install "$tmp_dir" "$bin_in_archive" "$dest"
-            else
-                gunzip -c "$download_path" > "$dest"
-            fi
-            ;;
-        *Zip*)
-            unzip -q "$download_path" -d "$tmp_dir"
-            find_and_install "$tmp_dir" "$bin_in_archive" "$dest"
-            ;;
-        *POSIX\ tar*|*tar\ archive*)
-            tar -xf "$download_path" -C "$tmp_dir"
-            find_and_install "$tmp_dir" "$bin_in_archive" "$dest"
-            ;;
-        *XZ*)
-            if [[ "$download_path" == *.tar.xz ]]; then
-                tar -xJf "$download_path" -C "$tmp_dir"
-                find_and_install "$tmp_dir" "$bin_in_archive" "$dest"
-            else
-                unxz -c "$download_path" > "$dest"
-            fi
-            ;;
-        *)
-            cp "$download_path" "$dest"
-            ;;
-    esac
-
-    chmod +x "$dest"
-    echo "✔ Successfully installed ${name} to ${dest}"
-}
-
-find_and_install() {
-    local search_dir="$1"
-    local target_name="$2"
-    local dest_path="$3"
-
-    local match
-    match="$(find "$search_dir" -type f -name "$target_name" | head -n 1)"
-
-    if [[ -z "$match" ]]; then
-        match="$(find "$search_dir" -type f -executable ! -name "*.sh" | head -n 1)"
-    fi
-
-    if [[ -n "$match" ]]; then
-        cp "$match" "$dest_path"
-    else
-        echo "Error: Could not locate binary '${target_name}' inside extracted archive." >&2
+    if [ -z "$name" ] || [ -z "$repo" ] || [ -z "$pattern" ]; then
+        echo "Error: Missing arguments."
+        echo "Usage: storm-pkg add <bin_name> <user/repo> <file_pattern>"
+        echo "Example: storm-pkg add bat sharkdp/bat x86_64-unknown-linux-musl.tar.gz"
         exit 1
     fi
-}
 
-list_packages() {
-    echo "Installed binaries in ${BIN_DIR}:"
-    ls -lh "${BIN_DIR}"
-}
+    if grep -q "install_github_bin \"$name\"" "$BOOTSTRAP_FILE"; then
+        echo "Package '$name' is already declared in bootstrap.sh"
+        exit 1
+    fi
 
-remove_package() {
-    local name="$1"
-    if [[ -f "${BIN_DIR}/${name}" ]]; then
-        rm -f "${BIN_DIR}/${name}"
-        echo "✔ Removed ${name}"
+    local line="install_github_bin \"$name\" \"$repo\" \"$pattern\""
+    
+    if grep -q 'echo "=== Sync Complete ==="' "$BOOTSTRAP_FILE"; then
+        sed -i "/echo \"=== Sync Complete ===\"/i $line" "$BOOTSTRAP_FILE"
     else
-        echo "Package ${name} is not installed."
+        echo "$line" >> "$BOOTSTRAP_FILE"
+    fi
+
+    echo " [+] Added $name ($repo) to bootstrap.sh"
+    
+    read -p "Commit and push to GitHub now? (y/N) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        cmd_sync "Add $name package"
     fi
 }
 
-interactive_menu() {
-    echo "================================="
-    echo "     storm-pkg Interactive Menu   "
-    echo "================================="
-    echo "1) List installed binaries"
-    echo "2) Install a package from URL"
-    echo "3) Remove a binary"
-    echo "4) Exit"
-    echo -n "Select an option [1-4]: "
-    read -r choice
+cmd_remove() {
+    local name="$1"
 
-    case "$choice" in
-        1) list_packages ;;
-        2)
-            echo -n "Enter package name (e.g., fzf): "
-            read -r p_name
-            echo -n "Enter package download URL: "
-            read -r p_url
-            decompress_and_install "$p_name" "$p_url"
-            ;;
-        3)
-            echo -n "Enter binary name to remove: "
-            read -r p_name
-            remove_package "$p_name"
-            ;;
-        4) exit 0 ;;
-        *) echo "Invalid option." ;;
-    esac
+    if [ -z "$name" ]; then
+        echo "Usage: storm-pkg remove <bin_name>"
+        exit 1
+    fi
+
+    if ! grep -q "install_github_bin \"$name\"" "$BOOTSTRAP_FILE"; then
+        echo "Package '$name' not found in bootstrap.sh"
+        exit 1
+    fi
+
+    sed -i "/install_github_bin \"$name\"/d" "$BOOTSTRAP_FILE"
+    echo " [-] Removed $name from bootstrap.sh"
+
+    read -p "Commit and push to GitHub now? (y/N) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        cmd_sync "Remove $name package"
+    fi
 }
 
-# Main Command Dispatcher
-case "${1:-}" in
-    "")
-        interactive_menu
-        ;;
-    install)
-        shift
-        if [[ $# -lt 2 ]]; then usage; fi
-        decompress_and_install "$@"
-        ;;
+cmd_sync() {
+    local msg="${1:-Sync package manifest}"
+    cd "$REPO_DIR" || exit
+
+    if is_remote_env; then
+        echo "=== Running Remote Sync & Refresh ==="
+        echo " [↓] Pulling latest changes from GitHub..."
+        git pull --rebase origin main || git pull origin main
+        
+        echo " [↻] Triggering package refresh..."
+        if [ -f "$BOOTSTRAP_FILE" ]; then
+            bash "$BOOTSTRAP_FILE"
+        fi
+        echo "=== Remote Refresh Complete ==="
+    else
+        echo "=== Running Local Sync (Pushing to GitHub) ==="
+        git add bootstrap.sh
+        git commit -m "$msg"
+        git push
+        echo "=== Local Sync Complete ==="
+    fi
+}
+
+case "$1" in
     list)
-        list_packages
+        cmd_list
         ;;
-    remove)
-        shift
-        remove_package "$1"
+    add)
+        cmd_add "$2" "$3" "$4"
+        ;;
+    remove|rm)
+        cmd_remove "$2"
+        ;;
+    sync)
+        cmd_sync "$2"
         ;;
     *)
         usage
