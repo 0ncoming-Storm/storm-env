@@ -3,7 +3,7 @@
 A disposable development environment for machines you don't control.
 
 Storm installs a full toolchain — Neovim, tmux, ripgrep, fzf, lazygit, eza, jq, fastfetch — into
-`/tmp`, wires a LazyVim config into `$HOME/.config`, and rebuilds itself from Git whenever `/tmp`
+`/var/tmp`, wires a LazyVim config into `$HOME/.config`, and rebuilds itself from Git whenever `/var/tmp`
 gets wiped. Config survives; binaries don't have to.
 
 Built for shared lab accounts and restricted shells: no sudo, no root, no package manager, no
@@ -59,7 +59,7 @@ If you want this:
 git clone https://github.com/YOUR-USERNAME/storm-env.git ~/.storm-env
 export STORM_REPO="$HOME/.storm-env"
 
-# First-time install: downloads everything into /tmp/$USER-storm
+# First-time install: downloads everything into /var/tmp/$USER-storm
 bash "$STORM_REPO/bootstrap.sh"
 
 # Make it load on every shell
@@ -134,11 +134,11 @@ At runtime, Storm splits across two locations:
 |---|---|
 | `$HOME/.config` | `nvim` symlink, and anything you save |
 | `$HOME/.bashrc` | The two lines that source Storm |
-| `/tmp/$USER-storm/bin` | All installed binaries |
-| `/tmp/$USER-storm/{share,state,cache}` | Neovim plugins, LSP servers, undo files, caches |
-| `/tmp/$USER-storm/bootstrap.log` | Full log of the last sync |
+| `/var/tmp/$USER-storm/bin` | All installed binaries |
+| `/var/tmp/$USER-storm/{share,state,cache}` | Neovim plugins, LSP servers, undo files, caches |
+| `/var/tmp/$USER-storm/bootstrap.log` | Full log of the last sync |
 
-`XDG_CONFIG_HOME` stays `$HOME/.config`; the other three XDG variables are redirected into `/tmp`.
+`XDG_CONFIG_HOME` stays `$HOME/.config`; the other three XDG variables are redirected into `/var/tmp`.
 That's the entire trick — it keeps your config portable while keeping the several hundred MB of
 plugin state somewhere that doesn't count against a home-directory quota.
 
@@ -162,8 +162,8 @@ plugin state somewhere that doesn't count against a home-directory quota.
 | Function | Effect |
 |---|---|
 | `storm-update` | `git pull` + rebuild + reload shell config |
-| `storm-rebuild` | Wipe `/tmp/$USER-storm`, pull, reinstall, reload |
-| `storm-logs` | Print `/tmp/$USER-storm/bootstrap.log` |
+| `storm-rebuild` | Wipe `/var/tmp/$USER-storm`, pull, reinstall, reload |
+| `storm-logs` | Print `/var/tmp/$USER-storm/bootstrap.log` |
 | `storm-clean` | **`rm -rf` with no confirmation** — see the fork warning above |
 
 ### Aliases
@@ -222,13 +222,13 @@ Once a URL resolves, installation dispatches on the extension: `.tar.gz`/`.tgz` 
 a scratch directory and the binary is located by name, `.zip` is extracted with `unzip -j`, and
 anything else is treated as a raw binary. Everything is `chmod +x`'d into `$STORM/bin`.
 
-The whole run is `tee`'d to `/tmp/$USER-storm/bootstrap.log`, and each installer short-circuits if
+The whole run is `tee`'d to `/var/tmp/$USER-storm/bootstrap.log`, and each installer short-circuits if
 the binary already exists — so re-running `bootstrap.sh` only fetches what's missing.
 
 ## Troubleshooting
 
-**`[Storm] Missing /tmp binaries. Rebuilding...`** on every shell — normal after a reboot or a
-`/tmp` cleanup. It means the auto-rebuild path is working.
+**`[Storm] Missing /var/tmp binaries. Rebuilding...`** on every shell — normal after a reboot or a
+`/var/tmp` cleanup. It means the auto-rebuild path is working.
 
 **`API Warning: API rate limit exceeded`** — you've hit unauthenticated limits. Set
 `GITHUB_TOKEN`, or wait it out; the scraper fallback will usually still work.
@@ -242,7 +242,7 @@ changed, or the binary inside isn't named exactly `<name>`. Unpack it by hand an
 **Neovim plugins missing** — run `nvim --headless "+Lazy! sync" +qa`. `bootstrap.sh` does this at
 the end of every sync, but it's silenced with `|| true`.
 
-**Everything is broken** — `storm-rebuild` wipes `/tmp/$USER-storm` and reinstalls from scratch.
+**Everything is broken** — `storm-rebuild` wipes `/var/tmp/$USER-storm` and reinstalls from scratch.
 Nothing you care about lives there.
 
 ## Known issues
@@ -252,6 +252,6 @@ Nothing you care about lives there.
 - **`example.lua` is 190 lines of dead code.** It returns an empty spec on line 3.
 - **No integrity checking.** Downloads are neither checksum- nor signature-verified, despite
   ripgrep publishing `.sha256` files alongside every asset.
-- **The auto-rebuild blocks your shell.** If `/tmp` was wiped, the first shell after login sits in
+- **The auto-rebuild blocks your shell.** If `/var/tmp` was wiped, the first shell after login sits in
   `bootstrap.sh` for minutes before giving you a prompt.
 - **No test suite and no CI.** Verification is `bash -n` plus targeted tests of changed paths.

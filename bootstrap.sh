@@ -126,7 +126,7 @@ install_github_bin() {
     # NOTE: curl MUST use -f/--fail. Without it a 404 or a rate-limit page exits
     # 0 and its error body gets written to disk as if it were the binary.
     if [[ "$url" == *.tar.gz ]] || [[ "$url" == *.tgz ]]; then
-        local tmp_extract="/tmp/storm-extract-$name"
+        local tmp_extract="/var/tmp/storm-extract-$name"
         rm -rf "$tmp_extract"
         mkdir -p "$tmp_extract"
         if curl -fsSL "$url" | tar -xzf - -C "$tmp_extract" 2>/dev/null; then
@@ -143,7 +143,7 @@ install_github_bin() {
         fi
         rm -rf "$tmp_extract"
     elif [[ "$url" == *.zip ]]; then
-        local tmp_zip="/tmp/$USER-storm-$name.zip"
+        local tmp_zip="/var/tmp/$USER-storm-$name.zip"
         if curl -fsSL "$url" -o "$tmp_zip" && unzip -q -j "$tmp_zip" "$name" -d "$BIN_DIR" 2>/dev/null; then
             echo " [✓] Successfully installed $name"
         else
