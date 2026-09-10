@@ -1,7 +1,7 @@
 #!/bin/bash
 # bootstrap.sh - Storm Package Manager Installer (With Logging & Fallbacks)
 
-STORM="/tmp/$USER-storm"
+STORM="/var/tmp/$USER-storm"
 BIN_DIR="$STORM/bin"
 STORM_REPO="$HOME/.storm-env"
 MANIFEST="$STORM_REPO/packages.tsv"
