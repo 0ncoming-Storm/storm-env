@@ -208,6 +208,14 @@ if is-at-least 5.7.1 && (( $+commands[git] )); then
       source "$STORM_REPO/p10k.zsh"
     fi
 
+    # If we got this far, zinit itself loaded, so a missing p10k means the
+    # clone or the theme load failed (a network hiccup during a wipe-rebuild
+    # is the usual suspect). Say so -- a bare prompt with no explanation is
+    # exactly what makes a shared lab machine feel "broken".
+    if (( ! __STORM_P10K )); then
+      print -P "%F{yellow}[Storm] powerlevel10k did not load -- using the fallback prompt. Reopen the shell, or run storm-rebuild if it persists.%f"
+    fi
+
     # zsh-autosuggestions: grey-on-right suggestions from history+completion.
     typeset -g ZSH_AUTOSUGGEST_STRATEGY=(history completion)
     typeset -g ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=244'
@@ -539,6 +547,15 @@ alias zmv='noglob zmv -W'
 # ==============================================================================
 bindkey -e   # emacs-style line editing (predictable over SSH from anywhere)
 
+# Re-pin the core line-editing keys. Some system zsh configs (lab /etc/zshrc)
+# switch keymaps or rebind them in ways that brick Backspace and its friends;
+# terminals send either DEL or ^H for Backspace, so bind both.
+bindkey '^?' backward-delete-char
+bindkey '^H' backward-delete-char
+bindkey '^W' backward-kill-word
+bindkey '^U' backward-kill-line
+bindkey '^K' kill-line
+
 autoload -Uz add-zsh-hook
 
 # ESC ESC: prepend `sudo` to whatever you're about to run.
@@ -605,8 +622,20 @@ if (( ! __STORM_P10K )); then
     b="$(git symbolic-ref --short HEAD 2>/dev/null)" || return 0
     print -n " ($b)"
   }
-  PROMPT='%F{green}%n@%m%f:%F{blue}%~%f$(_storm_git_branch)%(!.%F{red}.%F{cyan})%#%f '
-  RPROMPT='%F{240}%*%f'
+  _storm_apply_fallback_prompt() {
+    PROMPT='%F{green}%n@%m%f:%F{blue}%~%f$(_storm_git_branch)%(!.%F{red}.%F{cyan})%#%f '
+    RPROMPT='%F{240}%*%f'
+  }
+  # Apply once now and again after every command. The machine's own startup
+  # files (the lab's /etc/zshrc, the user's dotfiles) may install a precmd
+  # hook that re-sets the prompt -- observed in the wild as a bare "%m%# "
+  # prompt surviving a full Storm load. precmd_functions run in registration
+  # order and Storm's is appended last, so Storm's prompt wins. In p10k mode
+  # no guard is needed: p10k's own precmd hook repaints the prompt after any
+  # such interference.
+  _storm_apply_fallback_prompt
+  autoload -Uz add-zsh-hook
+  add-zsh-hook precmd _storm_apply_fallback_prompt
 fi
 
 # ==============================================================================
