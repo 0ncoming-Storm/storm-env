@@ -223,6 +223,7 @@ commits, pushes, and then **re-runs `bootstrap.sh`** — expect a few minutes.
 | `storm-update` | `git pull` + `zinit update` + rebuild + `exec zsh` to reload |
 | `storm-rebuild` | Wipe `/var/tmp/$USER-storm`, pull, reinstall, `exec zsh` to reload |
 | `storm-logs` | Print `/var/tmp/$USER-storm/bootstrap.log` |
+| `storm-doctor` | One-shot shell diagnosis: zsh binary, plugin/p10k state, prompt values, KEYTIMEOUT, git branch — paste it when a machine's shell looks wrong |
 | `storm-clean` | **`rm -rf`** of `$STORM_REPO` + `$STORM` (asks first) — see the fork warning above |
 
 `storm-update` and `storm-rebuild` finish by re-exec'ing zsh, so the whole environment — bashrc,
@@ -322,9 +323,12 @@ the end of every sync, but it's silenced with `|| true`.
 Storm's static zsh into `$STORM/bin`) and open a new shell, or check that `STORM_KEEP_BASH` isn't
 set. Force the fallback deliberately with `STORM_KEEP_BASH=1 bash`.
 
-**zsh starts but looks bare** — the plugin suite only loads on zsh ≥ 5.7.1 with `git` available,
-and only after zinit could clone itself. Check `zsh --version`, and look for clone errors under
-`$STORM/share/zinit`. The fallback prompt is deliberate, not a crash.
+**zsh starts but looks bare or the prompt is garbage** — the plugin suite only loads on zsh ≥
+5.7.1 with `git` available, and only after zinit could clone itself. Check `zsh --version`, and
+look for clone errors under `$STORM/share/zinit`. The fallback prompt is deliberate, not a crash.
+For anything stranger (a prompt that shows a branch name and nothing else, dead keybindings),
+run `storm-doctor` and paste its output — it prints the raw `PROMPT`/`PS2` values, whether p10k
+actually loaded, `KEYTIMEOUT`, and which zsh binary is running.
 
 **`storm-rebuild` left me in a weird shell** — it finishes by `exec zsh`; if that failed, just run
 `exec zsh` (or open a new shell) yourself.

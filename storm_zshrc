@@ -120,7 +120,13 @@ setopt NO_BEEP
 unsetopt FLOW_CONTROL          # free Ctrl-S / Ctrl-Q
 
 DIRSTACKSIZE=20
-KEYTIMEOUT=1                   # snappy key sequences (esp. ESC-based ones)
+# KEYTIMEOUT is the MAXIMUM wait for the next key of an ambiguous sequence.
+# 1 ms made every human-typed ESC pair (the ESC-ESC sudo prepend below) and
+# most Alt+key chords over SSH impossible -- zle resolved the first key as a
+# lone key before the second could arrive. 100 ms is still snappy for real
+# escape sequences (they arrive in one read) while leaving room for double
+# taps and slow links.
+KEYTIMEOUT=100
 
 # Ctrl-W / Alt-B / Alt-F: make '/' a word boundary so line-editing kills
 # match how you think about paths.
@@ -213,7 +219,7 @@ if is-at-least 5.7.1 && (( $+commands[git] )); then
       atload'!_zsh_autosuggest_start' \
         zsh-users/zsh-autosuggestions \
       atload'!_storm_bind_hss' \
-        zsh-users/history-substring-search
+        zsh-users/zsh-history-substring-search
   fi
 fi
 
@@ -441,6 +447,33 @@ storm-logs() {
   else
     print "No log file found at $log_file"
   fi
+}
+
+# storm-doctor: diagnose "my shell looks wrong" in one shot. Print it to the
+# ticket/chat when a lab machine misbehaves; every line is a checkable fact.
+storm-doctor() {
+  local storm_state plugins_cached
+  if [[ -d $STORM/bin ]]; then storm_state=present; else storm_state=MISSING; fi
+  plugins_cached=$(print -l -- "$XDG_DATA_HOME"/zinit/plugins/*(N/) 2>/dev/null | wc -l)
+  print -P "%F{cyan}── Storm doctor ──%f"
+  print -P "  zsh        : %z  (%F{240}$(command -v zsh 2>/dev/null || echo none)%f)"
+  print -P "  host       : $USER@$HOST  (uid $(id -u 2>/dev/null))"
+  print -P "  term       : TERM=${TERM}  ssh=${SSH_CONNECTION:+yes}  tmux=${TMUX:+yes}"
+  print -P "  repo       : $STORM_REPO"
+  print -P "  storm dir  : $STORM  ($storm_state)"
+  print -P "  zdotdir    : ${ZDOTDIR:-<unset>}"
+  print -P "  plugins    : zinit ${__STORM_PLUGINS:+loaded}${__STORM_PLUGINS:-NOT loaded}   p10k ${__STORM_P10K:+loaded}${__STORM_P10K:-NOT loaded}"
+  print -P "  keytimeout : ${KEYTIMEOUT} ms"
+  if (( $+functions[p10k] )); then
+    print -P "  p10k left  : ${POWERLEVEL9K_LEFT_PROMPT_ELEMENTS[*]:-<default>}"
+    print -P "  p10k right : ${POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS[*]:-<default>}"
+  fi
+  print -P "  PROMPT     : %F{240}${PROMPT:0:120}%f"
+  print -P "  PS2        : %F{240}${PS2:0:60}%f"
+  print -P "  compinit   : $(( +functions[_main_complete] )) (1 = completion system up)"
+  print -P "  git branch : $(git branch --show-current 2>/dev/null || echo not-in-repo)"
+  print -P "  zinit home : ${ZINIT[HOME_DIR]:-<none>}  ($plugins_cached plugins cached)"
+  print -P "%F{cyan}────────────────────%f"
 }
 
 storm-clean() {
