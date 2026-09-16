@@ -2,9 +2,13 @@
 
 A disposable development environment for machines you don't control.
 
-Storm installs a full toolchain — Neovim, tmux, ripgrep, fzf, lazygit, eza, jq, fastfetch — into
-`/var/tmp`, wires a LazyVim config into `$HOME/.config`, and rebuilds itself from Git whenever `/var/tmp`
-gets wiped. Config survives; binaries don't have to.
+Storm installs a full toolchain — a static zsh, Neovim, tmux, ripgrep, fzf, lazygit, eza, jq,
+fastfetch, zoxide, bat — into `/var/tmp`, wires a LazyVim config into `$HOME/.config`, and rebuilds
+itself from Git whenever `/var/tmp` gets wiped. Config survives; binaries don't have to.
+
+The interactive shell is **zsh**: `storm_bashrc` stays as the bootstrap entry point and hands off
+to zsh as soon as one is found, and `storm_zshrc` carries the real setup — Powerlevel10k, fzf-tab,
+autosuggestions, syntax highlighting and friends, all managed by zinit.
 
 Built for shared lab accounts and restricted shells: no sudo, no root, no package manager, no
 persistence guarantee between sessions.
@@ -33,7 +37,7 @@ If you want this:
    a foreign username into `storm-clean`'s `rm -rf`. Grep for it yourself:
 
    ```bash
-   grep -rn 'rm -rf' *.sh storm-pkg storm_bashrc
+   grep -rn 'rm -rf' *.sh storm-pkg storm_bashrc storm_zshrc
    ```
 
    Every path should read `$USER`, `$HOME`, `$STORM` or `$STORM_REPO`. If you see a literal
@@ -60,9 +64,11 @@ git clone https://github.com/YOUR-USERNAME/storm-env.git ~/.storm-env
 export STORM_REPO="$HOME/.storm-env"
 
 # First-time install: downloads everything into /var/tmp/$USER-storm
+# (includes a static, relocatable zsh, so no root / no system zsh needed)
 bash "$STORM_REPO/bootstrap.sh"
 
-# Make it load on every shell
+# Make it load on every shell. bash is the entry point; it execs zsh once one
+# is found (Storm's own build first, then the system's).
 cat >> ~/.bashrc <<'EOF'
 export STORM_REPO="$HOME/.storm-env"
 source "$STORM_REPO/storm_bashrc"
@@ -71,18 +77,27 @@ EOF
 exec bash
 ```
 
+That is the only dotfile you have to touch. `storm_bashrc` points `ZDOTDIR` at the repo's
+`zdotdir/` shim before exec'ing zsh, and the shim chains your own `~/.zshrc` (if any) and then
+loads `storm_zshrc` — so your existing zsh config is preserved and no `~/.zshrc` edit is required.
+If you'd rather start zsh directly, add `source "$STORM_REPO/storm_zshrc"` to your `~/.zshrc`;
+`storm_zshrc` is idempotent, so both paths coexist. Set `STORM_KEEP_BASH=1` to skip the handoff.
+
 `export STORM_REPO` is optional — both shell files now default it to `$HOME/.storm-env` and export
 it — but set it explicitly if you clone anywhere else. Older revisions used it in 15 places while
 defining it nowhere, which left an empty `PATH` entry and resolved the auto-rebuild to
 `/bootstrap.sh`.
 
-First run takes a few minutes — it pulls eight GitHub releases and clones the Neovim plugins.
+First run takes a few minutes — it pulls a handful of GitHub releases (zsh, Neovim, tmux, ripgrep,
+fzf, lazygit, eza, jq, fastfetch, zoxide, bat) and clones the Neovim plugins. On first zsh start,
+zinit then clones the plugin suite into `/var/tmp` (~10 MB).
 
 ## Requirements
 
 | Dependency | Required | Used for |
 |---|---|---|
-| `bash`, `curl`, `git`, `tar` | Yes | Everything |
+| `bash`, `curl`, `git`, `tar` | Yes | Installer, plus fallback shell if no zsh exists |
+| `zsh` | No | Storm installs its own static build (`romkatv/zsh-bin`) when absent |
 | `unzip` | Only for zip-format assets | Some releases ship `.zip` |
 | `GITHUB_TOKEN` | Optional | Avoiding API rate limits |
 | `tmux` | Optional | Auto-attached on SSH once installed |
@@ -101,7 +116,7 @@ export GITHUB_TOKEN="ghp_..."   # add to ~/.bashrc to persist
 
 ## What gets installed
 
-Everything except Neovim is declared in `packages.tsv`:
+Everything except Neovim and Zsh is declared in `packages.tsv`:
 
 | Package | Source | Why |
 |---|---|---|
@@ -112,16 +127,25 @@ Everything except Neovim is declared in `packages.tsv`:
 | `eza` | `eza-community/eza` | `ls` replacement (aliased to `ls`) |
 | `jq` | `jqlang/jq` | JSON on the command line |
 | `fastfetch` | `fastfetch-cli/fastfetch` | System info |
+| `zoxide` | `ajeetdsouza/zoxide` | Directory jumping (`z partial`, `zi`) |
+| `bat` | `sharkdp/bat` | File previews for fzf-tab |
 
-**Neovim** bypasses the manifest and is special-cased in `bootstrap.sh`: pinned URL, extracted to
-`$STORM/nvim-app`, symlinked into `$STORM/bin`.
+**Neovim** and **Zsh** bypass the manifest and are special-cased in `bootstrap.sh`: pinned URL,
+extracted to `$STORM/nvim-app` / `$STORM/zsh-app`, symlinked into `$STORM/bin`. Zsh comes from
+[`romkatv/zsh-bin`](https://github.com/romkatv/zsh-bin) — a statically linked, relocatable build
+that needs no root and no system libraries. After extraction, `bootstrap.sh` runs the archive's
+`relocate` script, which rewrites the install paths baked into the binary so it runs from
+`/var/tmp`.
 
 ## Layout
 
 ```
 storm-env/
 ├── bootstrap.sh      # Installer. Idempotent — safe to re-run.
-├── storm_bashrc      # Shell env — the file to source from .bashrc
+├── storm_bashrc      # Bootstrap env + fallback shell — sourced from .bashrc
+├── storm_zshrc       # The real interactive shell — sourced by the shim/.zshrc
+├── p10k.zsh          # Powerlevel10k prompt configuration
+├── zdotdir/.zshrc    # ZDOTDIR shim: chains your ~/.zshrc, then storm_zshrc
 ├── storm-pkg         # CLI for editing packages.tsv
 ├── packages.tsv      # The package manifest
 └── nvim/             # LazyVim config, symlinked to ~/.config/nvim
@@ -135,12 +159,47 @@ At runtime, Storm splits across two locations:
 | `$HOME/.config` | `nvim` symlink, and anything you save |
 | `$HOME/.bashrc` | The two lines that source Storm |
 | `/var/tmp/$USER-storm/bin` | All installed binaries |
+| `/var/tmp/$USER-storm/zsh-app` | The relocated static zsh (zsh-bin) |
+| `/var/tmp/$USER-storm/share/zinit` | zinit + its cloned zsh plugins (re-cloned after a wipe) |
+| `/var/tmp/$USER-storm/state/zsh` | zsh history |
 | `/var/tmp/$USER-storm/{share,state,cache}` | Neovim plugins, LSP servers, undo files, caches |
 | `/var/tmp/$USER-storm/bootstrap.log` | Full log of the last sync |
 
 `XDG_CONFIG_HOME` stays `$HOME/.config`; the other three XDG variables are redirected into `/var/tmp`.
 That's the entire trick — it keeps your config portable while keeping the several hundred MB of
 plugin state somewhere that doesn't count against a home-directory quota.
+
+## The shell: bash hands off to zsh
+
+bash stays the entry point (it's what login shells and `~/.bashrc` know how to source), but the
+moment an interactive bash finishes bootstrapping, it `exec`s zsh and gets out of the way:
+
+| File | Role |
+|---|---|
+| `storm_bashrc` | Environment bootstrap (PATH, XDG vars), `storm-*` functions, auto-rebuild, and the handoff. Also a complete fallback shell if no zsh exists. |
+| `zdotdir/.zshrc` | The ZDOTDIR shim. `storm_bashrc` points `ZDOTDIR` at `zdotdir/` before exec'ing zsh; the shim sources your own `~/.zshenv`/`~/.zshrc` first, then `storm_zshrc`. |
+| `storm_zshrc` | The actual shell: prompt, plugins, aliases, keybindings. Idempotent, so it is also safe to source directly from `~/.zshrc`. |
+| `p10k.zsh` | Powerlevel10k theme used by `storm_zshrc`. |
+
+The zsh binary itself is Storm's: `bootstrap.sh` installs the static, relocatable
+[romkatv/zsh-bin](https://github.com/romkatv/zsh-bin) build into `$STORM/zsh-app` and symlinks it
+into `$STORM/bin`, so the handoff works even on hosts with no zsh at all. Precedence is Storm's
+zsh → the host's zsh → stay in bash.
+
+What `storm_zshrc` loads (via [zinit](https://github.com/zdharma-continuum/zinit) turbo mode, so
+startup stays fast):
+
+- **powerlevel10k** — two-line lean prompt, instant prompt, transient prompt, git status.
+- **fzf-tab** — completion menus replaced by an fzf picker with per-context previews (eza/bat).
+- **fast-syntax-highlighting**, **zsh-autosuggestions**, **history-substring-search**,
+  **zsh-completions** — the usual quality-of-life set.
+- Plus zoxide (`z`/`zi` jumping), fzf keybindings, million-line shared history, typo-correcting
+  completion, and a plain-but-usable fallback prompt if none of the above can load.
+
+Everything zinit touches lives in `/var/tmp`, so a wiped `/var/tmp` simply re-clones the plugins on
+the next shell — same self-healing trick as the rest of Storm. Escape hatches: `STORM_KEEP_BASH=1`
+skips the handoff; the plugin suite is gated on `is-at-least 5.7.1`, so an ancient host zsh still
+gets a working (if plainer) shell.
 
 ## Commands
 
@@ -154,22 +213,36 @@ plugin state somewhere that doesn't count against a home-directory quota.
 | `storm-pkg sync [message]` | Commit, push, and rebuild locally |
 
 `add` and `remove` prompt `Commit and push to GitHub now? (y/N)`. `sync` runs
-`git add packages.tsv bootstrap.sh storm-pkg storm_bashrc`, commits, pushes, and then **re-runs
-`bootstrap.sh`** — expect a few minutes.
+`git add packages.tsv bootstrap.sh storm-pkg storm_bashrc storm_zshrc p10k.zsh zdotdir/.zshrc`,
+commits, pushes, and then **re-runs `bootstrap.sh`** — expect a few minutes.
 
 ### `storm-*` shell functions
 
 | Function | Effect |
 |---|---|
-| `storm-update` | `git pull` + rebuild + reload shell config |
-| `storm-rebuild` | Wipe `/var/tmp/$USER-storm`, pull, reinstall, reload |
+| `storm-update` | `git pull` + `zinit update` + rebuild + `exec zsh` to reload |
+| `storm-rebuild` | Wipe `/var/tmp/$USER-storm`, pull, reinstall, `exec zsh` to reload |
 | `storm-logs` | Print `/var/tmp/$USER-storm/bootstrap.log` |
-| `storm-clean` | **`rm -rf` with no confirmation** — see the fork warning above |
+| `storm-clean` | **`rm -rf`** of `$STORM_REPO` + `$STORM` (asks first) — see the fork warning above |
+
+`storm-update` and `storm-rebuild` finish by re-exec'ing zsh, so the whole environment — bashrc,
+zshrc, plugins — reloads cleanly in place.
 
 ### Aliases
 
-`vim` → `nvim`, `ls` → `eza`, `lg` → `lazygit`, `n` → `nvim`, plus `la`, `ll`, `..`, `c`, `mem`,
-`cpu`, `usage`, `grep` (colourised), a `build` wrapper around `g++`, and `mkcd`.
+The bash fallback keeps the originals (`vim` → `nvim`, `ls` → `eza`, `lg` → `lazygit`, `n`, `la`,
+`ll`, `..`, `c`, `mem`, `cpu`, `usage`, colourised `grep`, `build`, `mkcd`). `storm_zshrc` adds a
+zsh-flavoured superset on top:
+
+- **eza suite** — `ls`, `la`, `ll`, `lt`/`ltt` (trees), all with git status when available.
+- **git shorthand** — `gst`, `ga`, `gaa`, `gc`, `gcm`, `gco`, `gb`, `gd`, `gds`, `gl`, `gp`, `gpl`,
+  `gf`, `gm`, `grb`, `gcp`, `gsh`, `grh`, `gsl`.
+- **global aliases** — `G`/`H`/`T`/`L`/`S` pipes, `DN` → `/dev/null`, `NUL` → `> /dev/null 2>&1`.
+- **suffix aliases** — typing `notes.md` (or `.txt`, `.json`, `.yaml`, `.log`, …) opens it in `$EDITOR`.
+- **dir stack** — `-`, `1`…`5` jump back through `cd` history; `~storm` / `~stormrepo` named dirs.
+- **functions** — `extract` (any archive by extension), `build`, `mkcd`, `start-report`/`stop-report`.
+- **widgets** — `Esc Esc` prepends `sudo`, `Ctrl-X Ctrl-E` edits the line in `$EDITOR`, `Ctrl-S`
+  forward history search, `zmv` batch renames.
 
 ## Adding a package
 
@@ -183,7 +256,7 @@ The pattern is a `grep -E` regex matched against release asset filenames — use
 when a project names its assets inconsistently across versions.
 
 ```bash
-storm-pkg add bat sharkdp/bat 'x86_64-unknown-linux-gnu.tar.gz'
+storm-pkg add delta dandavison/delta 'x86_64-unknown-linux-musl.tar.gz'
 ```
 
 To find the right pattern, open the project's releases page, look at the Linux x86_64 asset
@@ -220,7 +293,10 @@ tries three strategies in order:
 
 Once a URL resolves, installation dispatches on the extension: `.tar.gz`/`.tgz` are streamed into
 a scratch directory and the binary is located by name, `.zip` is extracted with `unzip -j`, and
-anything else is treated as a raw binary. Everything is `chmod +x`'d into `$STORM/bin`.
+anything else is treated as a raw binary. Everything is `chmod +x`'d into `$STORM/bin`. Neovim and
+zsh take a detour instead: they extract full application trees into `$STORM/nvim-app` /
+`$STORM/zsh-app` (zsh additionally runs its `relocate` script) and only a symlink lands in
+`$STORM/bin`.
 
 The whole run is `tee`'d to `/var/tmp/$USER-storm/bootstrap.log`, and each installer short-circuits if
 the binary already exists — so re-running `bootstrap.sh` only fetches what's missing.
@@ -242,6 +318,17 @@ changed, or the binary inside isn't named exactly `<name>`. Unpack it by hand an
 **Neovim plugins missing** — run `nvim --headless "+Lazy! sync" +qa`. `bootstrap.sh` does this at
 the end of every sync, but it's silenced with `|| true`.
 
+**I land in bash, not zsh** — no zsh was found at handoff time. Run `bootstrap.sh` (it installs
+Storm's static zsh into `$STORM/bin`) and open a new shell, or check that `STORM_KEEP_BASH` isn't
+set. Force the fallback deliberately with `STORM_KEEP_BASH=1 bash`.
+
+**zsh starts but looks bare** — the plugin suite only loads on zsh ≥ 5.7.1 with `git` available,
+and only after zinit could clone itself. Check `zsh --version`, and look for clone errors under
+`$STORM/share/zinit`. The fallback prompt is deliberate, not a crash.
+
+**`storm-rebuild` left me in a weird shell** — it finishes by `exec zsh`; if that failed, just run
+`exec zsh` (or open a new shell) yourself.
+
 **Everything is broken** — `storm-rebuild` wipes `/var/tmp/$USER-storm` and reinstalls from scratch.
 Nothing you care about lives there.
 
@@ -255,3 +342,10 @@ Nothing you care about lives there.
 - **The auto-rebuild blocks your shell.** If `/var/tmp` was wiped, the first shell after login sits in
   `bootstrap.sh` for minutes before giving you a prompt.
 - **No test suite and no CI.** Verification is `bash -n` plus targeted tests of changed paths.
+- **Zsh is pinned to 5.8.** It comes from `romkatv/zsh-bin`, which builds 5.8, not the latest zsh.
+  The plugin suite is gated on `is-at-least 5.7.1`, so a newer *system* zsh also gets the full setup.
+- **The handoff re-reads `~/.zshrc`.** The ZDOTDIR shim chains your `~/.zshrc` on top of Storm; if
+  your `~/.zshrc` also sources `storm_zshrc`, the idempotency guard stops a double-load — but any
+  other side effects in your `~/.zshrc` still run once, as intended.
+- **`storm-pkg sync` assumes a clean push.** It commits the shell files and pushes without checking
+  that `origin` is a repo you control — same caveat as `storm-update` in the fork warning above.

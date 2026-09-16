@@ -1,0 +1,4 @@
+# Ignore anything zsh might drop here, except the shim itself.
+*
+!.gitignore
+!.zshrc

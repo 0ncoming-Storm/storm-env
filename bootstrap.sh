@@ -188,8 +188,55 @@ install_neovim() {
     fi
 }
 
+install_zsh() {
+    if [ -x "$BIN_DIR/zsh" ] && [ -e "$STORM/zsh-app/bin/zsh" ]; then
+        echo " [✓] zsh is already installed"
+        return
+    fi
+    echo " [↓] Installing Zsh (romkatv/zsh-bin static, relocatable build)..."
+    local url
+    # The trailing '"' anchors the match to the real .tar.gz asset and keeps
+    # the sibling '.tar.gz.asc' signature file from matching as a substring.
+    url=$(get_download_url "romkatv/zsh-bin" 'linux-x86_64\.tar\.gz"')
+    if [ -z "$url" ]; then
+        echo " [X] Failed to fetch download URL for zsh"
+        return
+    fi
+    echo "     Target: $url"
+    # Unlike the single-binary tools, zsh-bin is a full tree (bin/, share/) and
+    # its binary carries build-time paths, so it needs its own directory plus a
+    # relocation pass rather than a bare copy into $BIN_DIR.
+    rm -rf "$STORM/zsh-app"
+    mkdir -p "$STORM/zsh-app"
+    if curl -fsSL "$url" | tar -xzf - -C "$STORM/zsh-app"; then
+        # The archive ships a `relocate` script that rewrites the hard-coded
+        # install paths inside the binary so it runs from $STORM/zsh-app. Its
+        # path embeds the zsh version, so locate it (and the binary) dynamically.
+        local relocate zsh_bin
+        relocate=$(find "$STORM/zsh-app" -type f -path '*scripts/relocate' | head -n 1)
+        zsh_bin=$(find "$STORM/zsh-app" -type f -name zsh -path '*bin/zsh' | head -n 1)
+        if [ -n "$relocate" ] && [ -n "$zsh_bin" ]; then
+            chmod +x "$relocate" "$zsh_bin" 2>/dev/null
+            # relocate derives source/dest from its own location and patches in
+            # place, so it can run from anywhere. Non-fatal if it hiccups: a
+            # partially-relocated zsh is still better than none, and the handoff
+            # falls back to the system zsh regardless.
+            sh "$relocate" >/dev/null 2>&1 || echo " [!] zsh relocate reported an issue (continuing)"
+            ln -sfn "$zsh_bin" "$BIN_DIR/zsh"
+            echo " [✓] Successfully installed Zsh"
+        else
+            echo " [X] Zsh extraction failed (relocate script or binary not found)"
+            rm -rf "$STORM/zsh-app"
+        fi
+    else
+        echo " [X] Zsh download/extraction error (HTTP failure or corrupt archive)"
+        rm -rf "$STORM/zsh-app"
+    fi
+}
+
 echo "=== Storm Package Sync ==="
 
+install_zsh
 install_neovim
 
 if [ -f "$MANIFEST" ]; then

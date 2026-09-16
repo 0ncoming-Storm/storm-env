@@ -1,5 +1,10 @@
 #!/bin/bash
 # storm_bashrc - Your persistent interactive configuration loaded from Git
+#
+# NOTE: zsh is Storm's primary interactive shell. This file still carries the
+# full environment (so bash remains a working fallback), but on interactive
+# startup it hands off to zsh as soon as one is found -- see the "ZSH
+# HANDOFF" block near the bottom. Everything shiny lives in storm_zshrc.
 
 # ==============================================================================
 # ENVIRONMENT & ALIASES
@@ -182,6 +187,46 @@ case "$-" in
         bash "$STORM_REPO/bootstrap.sh"
       else
         echo -e "\033[1;31m[Storm] Warning: Missing bootstrap script at $STORM_REPO/bootstrap.sh\033[0m"
+      fi
+    fi
+    ;;
+esac
+
+# ==============================================================================
+# ZSH HANDOFF
+# ==============================================================================
+# zsh is Storm's interactive shell. When one is available, stop being bash and
+# become zsh: everything interactive (prompt, plugins, widgets) lives in
+# storm_zshrc. Precedence:
+#   1. $STORM/bin/zsh  -- Storm's own static, relocatable build (zsh-bin),
+#                         installed by bootstrap.sh; guaranteed to exist on
+#                         machines Storm controls even with no system zsh.
+#   2. The system zsh, if any.
+#   3. Otherwise stay in bash (this file remains a complete fallback).
+#
+# ZDOTDIR points zsh at the repo's zdotdir/ shim, which chains the user's own
+# ~/.zshenv / ~/.zshrc and then loads storm_zshrc -- no need to edit dotfiles
+# on the target machine.
+#
+# Guarded on interactivity for the same reason the tmux attach below is: an
+# unguarded exec would break scp/sftp/rsync/git-over-ssh, which run
+# `bash -c ...` through the login shell. Set STORM_KEEP_BASH=1 to opt out.
+case "$-" in
+  *i*)
+    if [ -z "$STORM_KEEP_BASH" ]; then
+      _storm_zsh=""
+      if [ -x "$STORM/bin/zsh" ]; then
+        _storm_zsh="$STORM/bin/zsh"
+      elif command -v zsh >/dev/null 2>&1; then
+        _storm_zsh="$(command -v zsh)"
+      fi
+      if [ -n "$_storm_zsh" ]; then
+        # Only point ZDOTDIR at the shim if it exists; a missing dir would
+        # make zsh skip dotfiles entirely (including the user's own).
+        if [ -d "$STORM_REPO/zdotdir" ]; then
+          export ZDOTDIR="$STORM_REPO/zdotdir"
+        fi
+        exec "$_storm_zsh"
       fi
     fi
     ;;
