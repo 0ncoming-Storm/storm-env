@@ -105,7 +105,7 @@ Everything except Neovim is declared in `packages.tsv`:
 
 | Package | Source | Why |
 |---|---|---|
-| `tmux` | `axetroy/tmux-builds` | **Broken** — see Known issues |
+| `tmux` | `axetroy/tmux-builds` | Terminal multiplexer |
 | `rg` | `BurntSushi/ripgrep` | Search |
 | `lazygit` | `jesseduffield/lazygit` | Git TUI |
 | `fzf` | `junegunn/fzf` | Fuzzy finding |
