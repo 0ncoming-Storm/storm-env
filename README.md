@@ -7,8 +7,11 @@ fastfetch, zoxide, bat — into `/var/tmp`, wires a LazyVim config into `$HOME/.
 itself from Git whenever `/var/tmp` gets wiped. Config survives; binaries don't have to.
 
 The interactive shell is **zsh**: `storm_bashrc` stays as the bootstrap entry point and hands off
-to zsh as soon as one is found, and `storm_zshrc` carries the real setup — Powerlevel10k, fzf-tab,
-autosuggestions, syntax highlighting and friends, all managed by zinit.
+to zsh as soon as one is found. `storm_zshrc` is deliberately lean — a reliable prompt, line
+editing, history, completion and aliases with no network dependency at startup. The fancy layer
+(Powerlevel10k, fzf-tab, autosuggestions, syntax highlighting, all managed by zinit) lives in
+`storm_zshrc_fancy.zsh` and is opt-in via `STORM_FANCY=1`, because on hostile lab machines a plain
+working shell beats a fancy broken one.
 
 Built for shared lab accounts and restricted shells: no sudo, no root, no package manager, no
 persistence guarantee between sessions.
@@ -143,8 +146,9 @@ that needs no root and no system libraries. After extraction, `bootstrap.sh` run
 storm-env/
 ├── bootstrap.sh      # Installer. Idempotent — safe to re-run.
 ├── storm_bashrc      # Bootstrap env + fallback shell — sourced from .bashrc
-├── storm_zshrc       # The real interactive shell — sourced by the shim/.zshrc
-├── p10k.zsh          # Powerlevel10k prompt configuration
+├── storm_zshrc       # The core interactive shell — sourced by the shim/.zshrc
+├── storm_zshrc_fancy.zsh  # Optional zinit/p10k layer — only with STORM_FANCY=1
+├── p10k.zsh          # Powerlevel10k prompt configuration (used by the fancy layer)
 ├── zdotdir/.zshrc    # ZDOTDIR shim: chains your ~/.zshrc, then storm_zshrc
 ├── storm-pkg         # CLI for editing packages.tsv
 ├── packages.tsv      # The package manifest
@@ -178,28 +182,45 @@ moment an interactive bash finishes bootstrapping, it `exec`s zsh and gets out o
 |---|---|
 | `storm_bashrc` | Environment bootstrap (PATH, XDG vars), `storm-*` functions, auto-rebuild, and the handoff. Also a complete fallback shell if no zsh exists. |
 | `zdotdir/.zshrc` | The ZDOTDIR shim. `storm_bashrc` points `ZDOTDIR` at `zdotdir/` before exec'ing zsh; the shim sources your own `~/.zshenv`/`~/.zshrc` first, then `storm_zshrc`. |
-| `storm_zshrc` | The actual shell: prompt, plugins, aliases, keybindings. Idempotent, so it is also safe to source directly from `~/.zshrc`. |
-| `p10k.zsh` | Powerlevel10k theme used by `storm_zshrc`. |
+| `storm_zshrc` | The core shell: reliable prompt, options, history, completion, aliases, keybindings. Idempotent, so it is also safe to source directly from `~/.zshrc`. |
+| `storm_zshrc_fancy.zsh` | The optional plugin layer (zinit, p10k, fzf-tab, autosuggestions, …). Only loaded when `STORM_FANCY` is set. |
+| `p10k.zsh` | Powerlevel10k theme used by the fancy layer. |
 
 The zsh binary itself is Storm's: `bootstrap.sh` installs the static, relocatable
 [romkatv/zsh-bin](https://github.com/romkatv/zsh-bin) build into `$STORM/zsh-app` and symlinks it
 into `$STORM/bin`, so the handoff works even on hosts with no zsh at all. Precedence is Storm's
 zsh → the host's zsh → stay in bash.
 
-What `storm_zshrc` loads (via [zinit](https://github.com/zdharma-continuum/zinit) turbo mode, so
-startup stays fast):
+What `storm_zshrc` loads (the core — always, no network, no plugins):
 
-- **powerlevel10k** — two-line lean prompt, instant prompt, transient prompt, git status.
+- **A reliable prompt** — green `user@host`, blue dir, magenta git branch, dim clock on the right.
+  It is re-applied after every command, so lab `/etc/zshrc` precmd hooks that re-set the prompt
+  (the classic "bare system prompt survives a full load" bug) can't win.
+- **Working line editing over SSH** — `KEYTIMEOUT=100`, re-pinned Backspace/Ctrl-W/Ctrl-U/Ctrl-K,
+  `Esc Esc` → `sudo`, `Ctrl-X Ctrl-E` → edit line in `$EDITOR`.
+- **Hostile-option guard** — `unsetopt POSIX_IDENTIFIERS KSH_ARRAYS` before anything else runs.
+  Lab machines that set these in `/etc/zshrc` break `#name` length arithmetic (the
+  `zsh: bad math expression: operator expected at '...'` errors) and 1-based arrays across the
+  whole zsh plugin ecosystem; Storm strips them on entry.
+- Plain `compinit` completion (the host's own, `-u` to skip the insecure-dir audit on shared
+  machines), million-line shared history, zsh-flavoured aliases, and the functions/widgets above.
+- fzf and zoxide integrations, but only when the binaries actually exist.
+
+What `storm_zshrc_fancy.zsh` adds (opt-in: `export STORM_FANCY=1` in `~/.zshenv` before Storm
+loads, then reopen the shell):
+
+- **powerlevel10k** — two-line lean prompt, instant prompt, transient prompt, git status. Takes
+  over from the core prompt; if it fails to load the core prompt stays.
 - **fzf-tab** — completion menus replaced by an fzf picker with per-context previews (eza/bat).
 - **fast-syntax-highlighting**, **zsh-autosuggestions**, **history-substring-search**,
-  **zsh-completions** — the usual quality-of-life set.
-- Plus zoxide (`z`/`zi` jumping), fzf keybindings, million-line shared history, typo-correcting
-  completion, and a plain-but-usable fallback prompt if none of the above can load.
+  **zsh-completions** — the usual quality-of-life set, loaded via [zinit](https://github.com/zdharma-continuum/zinit)
+  turbo mode so startup stays fast.
+- The daily fastfetch splash.
 
 Everything zinit touches lives in `/var/tmp`, so a wiped `/var/tmp` simply re-clones the plugins on
 the next shell — same self-healing trick as the rest of Storm. Escape hatches: `STORM_KEEP_BASH=1`
-skips the handoff; the plugin suite is gated on `is-at-least 5.7.1`, so an ancient host zsh still
-gets a working (if plainer) shell.
+skips the handoff; `STORM_FANCY` unset skips the plugin stack; the fancy layer is additionally
+gated on `is-at-least 5.7.1`, so an ancient host zsh still gets a working (plain) shell.
 
 ## Commands
 
@@ -323,12 +344,22 @@ the end of every sync, but it's silenced with `|| true`.
 Storm's static zsh into `$STORM/bin`) and open a new shell, or check that `STORM_KEEP_BASH` isn't
 set. Force the fallback deliberately with `STORM_KEEP_BASH=1 bash`.
 
-**zsh starts but looks bare or the prompt is garbage** — the plugin suite only loads on zsh ≥
-5.7.1 with `git` available, and only after zinit could clone itself. Check `zsh --version`, and
-look for clone errors under `$STORM/share/zinit`. The fallback prompt is deliberate, not a crash.
-For anything stranger (a prompt that shows a branch name and nothing else, dead keybindings),
-run `storm-doctor` and paste its output — it prints the raw `PROMPT`/`PS2` values, whether p10k
-actually loaded, `KEYTIMEOUT`, and which zsh binary is running.
+**`zsh: bad math expression: operator expected at '...'`** — a machine option (usually
+`POSIX_IDENTIFIERS` in `/etc/zshrc`) is breaking `#name` length arithmetic. Storm unsets it on
+entry (section 0.5 of `storm_zshrc`); if the error persists, something re-set it afterwards —
+`storm-doctor`'s `hostile` line will show it.
+
+**The prompt is the bare system one (`host%`)** — a lab `/etc/zshrc` prompt hook is winning. The
+core prompt re-applies itself after every command and is registered last, so if the system prompt
+still wins, something is re-setting it *between* prompts (a precmd hook installed after Storm's) —
+run `storm-doctor` and check `precmd_functions`.
+
+**zsh starts but looks bare or the prompt is garbage** — with `STORM_FANCY=1`, the plugin suite
+only loads on zsh ≥ 5.7.1 with `git` available, and only after zinit could clone itself. Check
+`zsh --version`, and look for clone errors under `$STORM/share/zinit`. If p10k fails the core
+prompt stays — that is deliberate, not a crash. For anything stranger (dead keybindings), run
+`storm-doctor` and paste its output — it prints the raw `PROMPT`/`PS2` values, hostile options,
+whether zinit/p10k actually loaded, `KEYTIMEOUT`, and which zsh binary is running.
 
 **`storm-rebuild` left me in a weird shell** — it finishes by `exec zsh`; if that failed, just run
 `exec zsh` (or open a new shell) yourself.
