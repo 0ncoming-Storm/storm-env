@@ -225,7 +225,13 @@ fi
 # fd ships its own bash completion file inside the tarball. If it landed in a
 # place we can source, wire it in.
 if command -v fd >/dev/null 2>&1; then
+  # fd's tarball ships autocomplete/fd.bash inside a versioned top-level dir
+  # (e.g. fd-v10.5.0-x86_64-unknown-linux-gnu/autocomplete/fd.bash). The
+  # bootstrap copies that dir to $STORM/share/<versioned-dir>/, so search for
+  # the completion in any matching versioned share dir.
   for _fd_comp in \
+      "$STORM/share"/fd-*/autocomplete/fd.bash \
+      "$STORM/share"/fd-*/autocomplete/fdfind.bash \
       "$STORM/share/fd/completions/fd.bash" \
       "$STORM/share/bash-completion/completions/fd" \
       /usr/share/bash-completion/completions/fd; do
@@ -274,8 +280,11 @@ fi
 if command -v bat >/dev/null 2>&1; then
   alias cat='bat --paging=never'
   alias bat='bat --paging=always'
-  # bat ships completion files too
+  # bat's tarball ships autocomplete/bat.bash inside a versioned top-level dir
+  # (e.g. bat-v0.26.1-x86_64-unknown-linux-gnu/autocomplete/bat.bash). Search
+  # in any matching versioned share dir.
   for _bat_comp in \
+      "$STORM/share"/bat-*/autocomplete/bat.bash \
       "$STORM/share/bat/autocomplete/bat.bash" \
       /usr/share/bash-completion/completions/bat; do
     [ -f "$_bat_comp" ] && source "$_bat_comp" 2>/dev/null && break
@@ -356,7 +365,7 @@ scratch() {
 }
 
 # ==============================================================================
-# PROJECT AWARENESS — run on every cd.
+# PROJECT AWARENESS — run on every cd via bash's built-in chpwd hook.
 # ==============================================================================
 _storm_chpwd() {
   local repo_root
@@ -385,18 +394,10 @@ _storm_chpwd() {
       deactivate 2>/dev/null
     fi
   fi
-
-  # Update the prompt's idea of where we are (already done by PROMPT_COMMAND).
-  :
 }
 
-# Run chpwd on every directory change (Bash 4.4+ supports PROMPT_COMMAND hook,
-# butchpwd is the canonical way.)
-trap '_storm_chpwd' DEBUG
-# Actually use the builtin chpwd hook if available; fall back to DEBUG trap.
-if [ -n "${chpwd+x}" ]; then
-  chpwd() { _storm_chpwd; }
-fi
+# chpwd is called automatically by bash after every directory change.
+chpwd() { _storm_chpwd; }
 
 # ==============================================================================
 # SSH AGENT — auto-start and load keys in interactive sessions only.
