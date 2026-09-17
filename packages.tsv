@@ -7,4 +7,4 @@ jq	jqlang/jq	jq-linux-amd64|jq-linux64|jq-linux-x86_64
 fastfetch	fastfetch-cli/fastfetch	fastfetch-linux-amd64.tar.gz
 zoxide	ajeetdsouza/zoxide	zoxide-0.*x86_64.*linux.*tar.gz
 fd	sharkdp/fd	fd-.*x86_64.*linux.*tar.gz
-bat	sharkdp/bat	bat-0.*x86_64.*linux.*tar.gz
+bat	sharkdp/bat	bat-.*x86_64.*linux.*tar.gz
