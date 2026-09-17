@@ -112,14 +112,13 @@ case "$-" in
 
     # FZF fuzzy history search (ctrl-r) — only when fzf is installed.
     if command -v fzf >/dev/null 2>&1; then
-      # fzf ships its own bash bindings via `fzf --bash`. Evaluate those first
-      # (they register ctrl-r, ctrl-t, alt-c and the fzf completions), then
-      # override ctrl-r with a richer history search that includes timestamps.
-      #
-      # We eval the fzf bindings in a subshell first to capture its bind/fzf
-      # function definitions without polluting the current shell with its
-      # helper variables. Then we source the result. This is the same as
-      # `eval "$(fzf --bash)"` but easier to guard and debug.
+      # fzf --bash needs these env vars to wire ctrl-r, ctrl-t, alt-c.
+      export FZF_CTRL_T_COMMAND="${FZF_CTRL_T_COMMAND:-${FZF_DEFAULT_COMMAND:-fd --type f --color=always --hidden --exclude .git}}"
+      export FZF_ALT_C_COMMAND="${FZF_ALT_C_COMMAND:-${FZF_DEFAULT_COMMAND:-fd --type d --color=always --hidden --exclude .git}}"
+      export FZF_CTRL_R_OPTS="--tmux 0 --height 40% --reverse --tiebreak=index --no-sort --prompt='ctrl-r> ' --preview='echo {2..}' --preview-window='down:3:wrap' --bind=ctrl-s:toggle-sort"
+
+      # Evaluate fzf's bash bindings (registers ctrl-r, ctrl-t, alt-c and
+      # fzf-aware completions). Guarded so a non-interactive source can't break.
       eval "$(fzf --bash 2>/dev/null)" 2>/dev/null
 
       # Override ctrl-r with a timestamp-annotated history search.
