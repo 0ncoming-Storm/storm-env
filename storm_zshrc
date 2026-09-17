@@ -1,16 +1,14 @@
 # storm_zshrc - Storm's interactive Zsh configuration
 #
-# Design goal (phase 1): a RELIABLE, working shell on any machine -- a sane
-# prompt, working line editing, history, completion, aliases. No network
-# dependency at startup, no plugin stack that can go sideways. That is the
-# part that used to break on lab machines (bare system prompt surviving a
-# full load, dead Backspace, "bad math expression" on every keystroke).
+# Phase 1 on purpose: this file only carries what a WORKING shell needs --
+# a sane prompt, working line editing, history, completion, and the wiring
+# that keeps Storm itself usable (env, auto-rebuild, storm-update/rebuild).
+# No plugins, no network at startup, nothing that can fight a hostile
+# machine (lab /etc/zshrc with POSIX options, prompt-stealing hooks and
+# re-bound keys has been observed in the wild and is handled below).
 #
-# The fancy layer -- zinit, powerlevel10k, syntax highlighting, autosuggest,
-# history-substring-search, fzf-tab, fastfetch -- lives in
-# storm_zshrc_fancy.zsh and is only loaded when STORM_FANCY is set. Get the
-# core shell proven on the machine first; turn the sugar back on later with
-# one export.
+# Everything else -- aliases, fzf, zoxide, the zinit/p10k suite -- comes
+# back in a later phase, once this core is proven on the lab machines.
 #
 # Loaded one of two ways:
 #   1. Sourced from the user's ~/.zshrc (the documented way), or
@@ -18,8 +16,8 @@
 #      points ZDOTDIR there before exec'ing zsh.
 #
 # Inherited constraints: no root, no package manager, /var/tmp may be wiped
-# at any time (must rebuild itself), host zsh may be ancient (keep the core
-# load plain zsh, no exotic idioms).
+# at any time (must rebuild itself), host zsh may be ancient (plain idioms
+# only in the core load).
 
 # =============================================================================
 # 0. IDEMPOTENCY GUARD
@@ -137,15 +135,14 @@ unsetopt FLOW_CONTROL          # free Ctrl-S / Ctrl-Q
 
 DIRSTACKSIZE=20
 # KEYTIMEOUT is the MAXIMUM wait for the next key of an ambiguous sequence.
-# 1 ms made every human-typed ESC pair (the ESC-ESC sudo prepend below) and
-# most Alt+key chords over SSH impossible -- zle resolved the first key as a
-# lone key before the second could arrive. 100 ms is still snappy for real
-# escape sequences (they arrive in one read) while leaving room for double
-# taps and slow links.
+# 1 ms made every human-typed ESC pair and most Alt+key chords over SSH
+# impossible -- zle resolved the first key as a lone key before the second
+# could arrive. 100 ms is still snappy for real escape sequences (they
+# arrive in one read) while leaving room for double taps and slow links.
 KEYTIMEOUT=100
 
-# Ctrl-W / Alt-B / Alt-F: make '/' a word boundary so line-editing kills
-# match how you think about paths.
+# Make '/' a word boundary so line-editing kills match how you think
+# about paths.
 WORDCHARS=${WORDCHARS//\//}
 
 # =============================================================================
@@ -156,12 +153,6 @@ WORDCHARS=${WORDCHARS//\//}
 autoload -Uz compinit
 compinit -u -d "$XDG_CACHE_HOME/zsh/zcompdump-${SHORT_HOST}-${ZSH_VERSION}"
 
-# The fancy layer re-runs compinit after zsh-completions lands on FPATH.
-
-# Completion behaviour: arrow-key menu, case-insensitive then substring
-# matching, colourised lists, caching, and typo correction (tolerating ~1
-# error per 3 characters typed). All of this is plain compinit -- no
-# plugins required.
 zmodload zsh/complist 2>/dev/null
 zstyle ':completion:*' menu select
 zstyle ':completion:*' matcher-list \
@@ -172,20 +163,13 @@ zstyle ':completion:*' use-cache yes
 zstyle ':completion:*' cache-path "$XDG_CACHE_HOME/zsh/zcompcache"
 zstyle ':completion:*' accept-exact '*(N)'
 zstyle ':completion:*' squeeze-slashes true
-# Let `sudo <TAB>` see everything on Storm's PATH, not just /usr/bin.
-zstyle ':completion:*:*:sudo:*' command-path $path
-zstyle ':completion:*' completer _complete _match _approximate
-# Braced ${#NAME} on purpose: the bare $#NAME form dies with "bad math
-# expression" on machines that run POSIX_IDENTIFIERS.
-zstyle -e ':completion:*:approximate:*' max-errors \
-  'reply=( $(( (${#PREFIX} + ${#SUFFIX}) / 3 )) numeric )'
 
 # =============================================================================
 # 6. PROMPT (the reliable one)
 # =============================================================================
-# No plugin dependency: a plain, colour, two-state prompt that works even
-# when the lab environment is hostile. Green user@host, blue dir, magenta
-# git branch, cyan marker; dim clock on the right.
+# No plugin dependency: a plain, coloured prompt that works even when the
+# lab environment is hostile. Green user@host, blue dir, magenta git branch,
+# cyan marker; dim clock on the right.
 #
 # It is (re)applied after every command, not just once: lab /etc/zshrc files
 # in the wild install their own precmd hooks that re-set the prompt, and the
@@ -204,135 +188,23 @@ _storm_apply_prompt
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _storm_apply_prompt
 
-# If the fancy layer loads powerlevel10k successfully, p10k registers its
-# own precmd hook (later, so it repaints after this one) and removes ours --
-# see storm_zshrc_fancy.zsh.
+# =============================================================================
+# 7. KEYBINDINGS (line editing that actually works over SSH)
+# =============================================================================
+bindkey -e   # emacs-style line editing (predictable over SSH from anywhere)
+
+# Re-pin the core line-editing keys. Some system zsh configs (lab /etc/zshrc)
+# switch keymaps or rebind them in ways that brick Backspace and its friends;
+# terminals send either DEL or ^H for Backspace, so bind both.
+bindkey '^?' backward-delete-char
+bindkey '^H' backward-delete-char
+bindkey '^W' backward-kill-word
+bindkey '^U' backward-kill-line
+bindkey '^K' kill-line
 
 # =============================================================================
-# 7. ALIASES
+# 8. STORM FUNCTIONS (only the ones that keep Storm itself usable)
 # =============================================================================
-alias grep='grep --color=auto'
-alias ..='cd ..'
-alias ...='cd ../..'
-alias ....='cd ../../..'
-alias c='clear'
-alias n='nvim'
-alias mem='free -m -t'
-alias cpu='top -o %CPU'
-alias usage='du -sh * | sort -h'
-alias df='df -h'
-alias ports='ss -tulpn'
-
-# eza suite when available; boring-but-working GNU ls otherwise.
-if (( $+commands[eza] )); then
-  alias ls='eza -F --color=auto --group-directories-first'
-  alias la='eza -laF --git --group-directories-first'
-  alias ll='eza -lF --git --group-directories-first'
-  alias lt='eza --tree --level=2 --group-directories-first'
-  alias ltt='eza --tree --level=3 --group-directories-first'
-else
-  alias ls='ls --color=auto'
-  alias la='ls -lah'
-  alias ll='ls -lh'
-fi
-
-(( $+commands[nvim] ))    && alias vim='nvim'
-(( $+commands[lazygit] )) && alias lg='lazygit'
-
-# Curated git shorthand (deliberately not the full OMZ kitchen sink).
-alias g='git'
-alias gst='git status -sb'
-alias ga='git add'
-alias gaa='git add --all'
-alias gc='git commit -v'
-alias gcm='git commit -vm'
-alias gco='git checkout'
-alias gb='git branch'
-alias gd='git diff'
-alias gds='git diff --staged'
-alias gl='git log --oneline --graph --decorate -15'
-alias glo='git log --oneline --graph --decorate'
-alias gp='git push'
-alias gpl='git pull'
-alias gf='git fetch --all --prune'
-alias gm='git merge'
-alias grb='git rebase'
-alias gcp='git cherry-pick'
-alias gsh='git show'
-alias grh='git reset'
-alias gsl='git stash list'
-
-# Global aliases: `zsh` superpower -- these expand anywhere on the line.
-alias -g G='| grep --color=auto'
-alias -g H='| head'
-alias -g T='| tail'
-alias -g L='| less -R'
-alias -g S='| sort'
-alias -g DN='/dev/null'
-alias -g NUL='> /dev/null 2>&1'
-
-# Suffix aliases: typing `notes.md` on its own opens it in $EDITOR.
-if [[ -n $EDITOR ]]; then
-  for _storm_ext in md txt rst json yaml yml toml ini conf cfg csv log; do
-    alias -s "$_storm_ext=$EDITOR"
-  done
-  unset _storm_ext
-fi
-
-# Directory stack: `-` is the previous dir, `1`..`5` pop the stack.
-alias -- -='cd -'
-for _storm_i in 1 2 3 4 5; do
-  alias "$_storm_i=cd -$_storm_i"
-done
-unset _storm_i
-
-# Named directories: `cd ~storm`, `ls ~stormrepo/...`, tab-completable.
-hash -d storm="$STORM" 2>/dev/null
-hash -d stormrepo="$STORM_REPO" 2>/dev/null
-
-# =============================================================================
-# 8. FUNCTIONS
-# =============================================================================
-build() {
-  if [[ -z $1 ]]; then
-    print "Usage: build <filename_without_extension>"
-    return 1
-  fi
-  g++ -Wall -Wextra "$1.cpp" -o "$1" && ./"$1"
-}
-
-mkcd() {
-  if [[ -z $1 ]]; then
-    print "Usage: mkcd <directory_path>"
-    return 1
-  fi
-  command mkdir -p "$1" && cd "$1"
-}
-
-# extract <archive> -- unpack anything by extension, no flag memorisation.
-extract() {
-  if [[ ! -f $1 ]]; then
-    print "extract: '$1' is not a file"
-    return 1
-  fi
-  case "${(L)1}" in
-    *.tar.gz|*.tgz)   tar xzf "$1" ;;
-    *.tar.xz)          tar xJf "$1" ;;
-    *.tar.bz2|*.tbz2)  tar xjf "$1" ;;
-    *.tar.zst)         tar --zstd -xf "$1" ;;
-    *.tar)             tar xf "$1" ;;
-    *.zip|*.jar|*.war) unzip "$1" ;;
-    *.gz)              gunzip "$1" ;;
-    *.xz)              unxz "$1" ;;
-    *.bz2)             bunzip2 "$1" ;;
-    *.zst)             unzstd "$1" ;;
-    *.rar)             unrar x "$1" ;;
-    *.7z)              7z x "$1" ;;
-    *.z)               uncompress "$1" ;;
-    *) print "extract: unsupported format: $1"; return 1 ;;
-  esac
-}
-
 # Reload the whole shell by re-exec'ing zsh. Routes through Storm's ZDOTDIR
 # shim when present, so this works even on hosts without a ~/.zshrc edit.
 _storm_reload() {
@@ -393,147 +265,17 @@ storm-doctor() {
   print -P "  repo       : $STORM_REPO"
   print -P "  storm dir  : $STORM  ($storm_state)"
   print -P "  zdotdir    : ${ZDOTDIR:-<unset>}"
-  print -P "  fancy      : ${STORM_FANCY:+on}${STORM_FANCY:-off}   zinit ${functions[zinit]:+loaded}${functions[zinit]:-not loaded}   p10k ${functions[p10k]:+loaded}${functions[p10k]:-not loaded}"
   print -P "  keytimeout : ${KEYTIMEOUT} ms"
   print -P "  hostile    : ${hostile_opts[*]:-none}  (options that break the plugin stack)"
+  print -P "  precmds    : ${precmd_functions[*]:-none}"
   print -P "  PROMPT     : %F{240}${PROMPT:0:120}%f"
   print -P "  PS2        : %F{240}${PS2:0:60}%f"
   print -P "  git branch : $(git branch --show-current 2>/dev/null || echo not-in-repo)"
   print -P "%F{cyan}────────────────────%f"
 }
 
-storm-clean() {
-  # Remove ONLY this user's Storm paths. Never hardcode a username here, and
-  # never use a relative path -- `rm -rf .storm-env` deletes whatever
-  # happens to be named that in the current directory.
-  local repo="${STORM_REPO:-$HOME/.storm-env}"
-  local reply
-
-  print -P "%F{yellow}[Storm] About to delete:%f"
-  print "  $repo"
-  print "  $STORM"
-  read -r -q "reply?Proceed? This cannot be undone. (y/N) "
-  print
-  [[ $reply == [Yy] ]] || { print "Aborted."; return 1 }
-
-  command rm -rf "$repo"
-  command rm -rf "$STORM"
-
-  # The nvim symlink now points at nothing; drop it so bootstrap can relink.
-  [[ -L $HOME/.config/nvim ]] && command rm -f "$HOME/.config/nvim"
-
-  print -P "%F{green}[✓] Storm removed. Re-clone and run bootstrap.sh to reinstall.%f"
-}
-
-# Session command reports: start-report, do your work, stop-report out.txt.
-start-report() {
-  typeset -g START_REPORT_NUM="$(history 1 | awk '{print $1}')"
-  print "Report tracking started at history entry #$START_REPORT_NUM"
-}
-
-stop-report() {
-  if [[ -z $1 ]]; then
-    print "Usage: stop-report <output_file>"
-    return 1
-  fi
-  if [[ -z $START_REPORT_NUM ]]; then
-    print "Error: Run 'start-report' first."
-    return 1
-  fi
-
-  local stop_num
-  stop_num="$(history 1 | awk '{print $1}')"
-
-  history | awk -v start="$START_REPORT_NUM" -v stop="$stop_num" \
-    '$1 > start && $1 < stop' > "$1"
-
-  print "Saved history to $1 (entries $((START_REPORT_NUM + 1)) to $((stop_num - 1)))"
-  unset START_REPORT_NUM
-}
-
-# run-help <builtin> beats grepping zshbuiltins(1).
-unalias run-help 2>/dev/null
-autoload -Uz run-help
-alias help=run-help
-
-# Batch rename: zmv '*.txt' '${1}.md'  (-W = wildcard-style positions).
-autoload -Uz zmv
-alias zmv='noglob zmv -W'
-
 # =============================================================================
-# 9. KEYBINDINGS & WIDGETS
-# =============================================================================
-bindkey -e   # emacs-style line editing (predictable over SSH from anywhere)
-
-# Re-pin the core line-editing keys. Some system zsh configs (lab /etc/zshrc)
-# switch keymaps or rebind them in ways that brick Backspace and its friends;
-# terminals send either DEL or ^H for Backspace, so bind both.
-bindkey '^?' backward-delete-char
-bindkey '^H' backward-delete-char
-bindkey '^W' backward-kill-word
-bindkey '^U' backward-kill-line
-bindkey '^K' kill-line
-
-# ESC ESC: prepend `sudo` to whatever you're about to run.
-_storm_sudo_prepend() { LBUFFER="sudo $LBUFFER" }
-zle -N _storm_sudo_prepend
-bindkey '\e\e' _storm_sudo_prepend
-
-# Ctrl-X Ctrl-E: edit the current command line in $EDITOR.
-autoload -Uz edit-command-line
-zle -N edit-command-line
-bindkey '^X^E' edit-command-line
-
-# Space expands !-history references before you commit to them.
-bindkey ' ' magic-space
-
-# Ctrl-S: forward history search (FLOW_CONTROL is off, stty matches).
-[[ -t 0 ]] && stty -ixon 2>/dev/null
-bindkey '^S' history-incremental-search-forward
-
-# Terminal title: user@host:dir at the prompt, running command while busy.
-_storm_title_precmd() {
-  [[ $TERM == dumb ]] && return 0
-  print -Pn '\e]2;%n@%m: %~\a'
-}
-_storm_title_preexec() {
-  [[ $TERM == dumb ]] && return 0
-  print -Pn '\e]2;'
-  print -rn -- "${1%% *}"
-  print -Pn ' @ %~\a'
-}
-add-zsh-hook precmd _storm_title_precmd
-add-zsh-hook preexec _storm_title_preexec
-
-# =============================================================================
-# 10. FZF + ZOXIDE (only when the binaries exist -- silent no-op otherwise)
-# =============================================================================
-export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border --info=inline'
-if (( $+commands[fzf] )) && fzf --zsh >/dev/null 2>&1; then
-  eval "$(fzf --zsh)"
-fi
-
-if (( $+commands[zoxide] )); then
-  eval "$(zoxide init zsh)"
-fi
-
-# =============================================================================
-# 11. OPTIONAL FANCY LAYER (phase 2)
-# =============================================================================
-# The zinit plugin suite -- powerlevel10k, fast-syntax-highlighting,
-# zsh-autosuggestions, history-substring-search, fzf-tab -- plus the daily
-# fastfetch splash. Opt-in on purpose: a plain working shell beats a fancy
-# broken one, and the lab machines have proven hostile to the plugin stack.
-#
-# Turn it on with (in ~/.zshenv, or anywhere before Storm loads):
-#   export STORM_FANCY=1
-# Then reopen the shell (or run storm-update to clone anything missing).
-if [[ -n $STORM_FANCY && -f $STORM_REPO/storm_zshrc_fancy.zsh ]]; then
-  source "$STORM_REPO/storm_zshrc_fancy.zsh"
-fi
-
-# =============================================================================
-# 12. AUTO-START TMUX ON SSH
+# 9. AUTO-START TMUX ON SSH
 # =============================================================================
 # Same guards as storm_bashrc: interactive-only (unguarded `exec tmux`
 # breaks scp/sftp/rsync/git-over-ssh), never inside an existing tmux,
