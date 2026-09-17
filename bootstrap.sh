@@ -130,14 +130,42 @@ install_github_bin() {
         rm -rf "$tmp_extract"
         mkdir -p "$tmp_extract"
         if curl -fsSL "$url" | tar -xzf - -C "$tmp_extract" 2>/dev/null; then
+            # fd/bat/zoxide ship a versioned top-level dir (fd-10.0.0-x86_64/...).
+            # Find the binary by name anywhere in the tree.
             local bin_path
             bin_path=$(find "$tmp_extract" -type f -name "$name" | head -n 1)
+            # zoxide binary is named "zoxide"; fd is "fd"; bat is "bat".
+            # Some archives ship e.g. "bat" inside "bat-v0.26.1/..." — the find
+            # above already handles that. But also handle the case where the
+            # binary is nested under an unexpected name by also trying the first
+            # executable file in the tree if the name lookup failed.
+            if [ -z "$bin_path" ]; then
+                bin_path=$(find "$tmp_extract" -type f -executable | head -n 1)
+            fi
             if [ -n "$bin_path" ]; then
                 mv "$bin_path" "$BIN_DIR/$name"
+                echo "     [i] Binary extracted from $bin_path"
                 echo " [✓] Successfully installed $name"
             else
                 echo " [X] Extraction failed: '$name' executable not found in archive"
             fi
+            # Clean up completions dir if present, to make sourcing easier.
+            # (zoxide/fd/bat ship bash completions in the archive.)
+            local comp_src comp_dst
+            comp_src=$(find "$tmp_extract" -type d -name "completions" | head -n 1)
+            if [ -n "$comp_src" ]; then
+                comp_dst="$STORM/share/$(basename "$comp_src")"
+                mkdir -p "$comp_dst"
+                cp -r "$comp_src"/* "$comp_dst/" 2>/dev/null || true
+                echo "     [i] Completions copied to $comp_dst"
+            fi
+            # cleanup autocomplete subdirs too (fd ships autocomplete/)
+            for ad in "$tmp_extract"/*/autocomplete; do
+                [ -d "$ad" ] || continue
+                comp_dst="$STORM/share/$(basename "$(dirname "$ad")")/autocomplete"
+                mkdir -p "$comp_dst"
+                cp -r "$ad"/* "$comp_dst/" 2>/dev/null || true
+            done
         else
             echo " [X] Download/Tar extraction error (HTTP failure or corrupt archive)"
         fi

@@ -1,31 +1,338 @@
 #!/bin/bash
-# storm_bashrc - Your persistent interactive configuration loaded from Git
+# storm_bashrc — maximal interactive Bash config for a disposable dev VM.
+#
+# Everything here is guarded: optional features are loaded only when their
+# binaries exist, and interactive-only hooks (bind, tmux exec, PROMPT_COMMAND)
+# are wrapped so that `ssh host <cmd>` never breaks non-interactive use.
+#
+# Bootstrap installs zoxide/fd/bat into $STORM/bin; aliases and completions
+# are wired here only when those binaries are present.
 
 # ==============================================================================
-# ENVIRONMENT & ALIASES
+# ENVIRONMENT
 # ==============================================================================
 export CLICOLOR=1
-# NOTE: GREP_OPTIONS was removed here. grep >= 2.21 no longer honours it (GNU
-# grep 3.8 silently ignores it). Use the `grep --color=auto` alias below instead.
+
+# Default prompt, before PROMPT_COMMAND gets a chance to override it.
+# (This is what you see if PROMPT_COMMAND is skipped for any reason.)
 PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 
-alias ls='ls --color=auto'
-alias la='ls -lah'
-alias ll='ls -lh'
-alias ..='cd ..'
-alias grep='grep --color=auto'
-alias c='clear'
-alias n='nvim'
-alias mem='free -m -t'
-alias cpu='top -o %CPU'
-alias usage='du -sh * | sort -h'
+# History behaviour — set before any history writes happen.
+export HISTSIZE=20000
+export HISTFILESIZE=50000
+export HISTCONTROL=ignoreboth:erasedups
+export HISTIGNORE="ls:la:ll:l:c:clear:history:exit:clear-screen"
 
+# Share history across concurrent shells and reload it every prompt. Every
+# interactive shell sees what the others typed.
+shopt -s histappend histverify lithist checkwinsize cmdhist extglob \
+         cdspell nocaseglob globstar progcomp
+
+# ==============================================================================
+# PROMPT — rendered by PROMPT_COMMAND so we can show dynamic state.
+# ==============================================================================
+# Computed values cached between prompts (cheap to recompute, avoids forks).
+_STORM_PREV_EXIT=0
+
+_storm_ps1_git() {
+  local branch status dirty ahead behind staged unstaged untracked
+  branch=$(git symbolic-ref --short HEAD 2>/dev/null || git describe --tags --exact-match HEAD 2>/dev/null || git rev-parse --short HEAD 2>/dev/null)
+  [ -z "$branch" ] && return
+  dirty=0
+  # Staged/unstaged/untracked counts (all cheap, one git status --porcelain call)
+  while IFS= read -r line; do
+    case "${line:0:2}" in
+      M\ ) ((staged++)) ;;
+      M\?) ((unstaged++)) ;;
+      \?\? ) ((untracked++)) ;;
+    esac
+  done < <(git status --porcelain 2>/dev/null)
+  dirty=$((staged + unstaged + untracked))
+  ahead=$(git rev-list --count @{upstream}..HEAD 2>/dev/null)
+  behind=$(git rev-list --count HEAD..@{upstream} 2>/dev/null)
+  status=""
+  [ "$dirty" -gt 0 ] && status+=" \[\033[31m\]*"
+  [ -n "$ahead" ] && [ "$ahead" -gt 0 ] && status+=" \[\033[33m\]↑${ahead}"
+  [ -n "$behind" ] && [ "$behind" -gt 0 ] && status+=" \[\033[33m\]↓${behind}"
+  printf '\[\033[36m\](%s%s)\[\033[00m\]' "$branch" "$status"
+}
+
+_storm_ps1_exit() {
+  [ "$_STORM_PREV_EXIT" -ne 0 ] && printf '\[\033[31m\] exit: %d\[\033[00m\] ' "$_STORM_PREV_EXIT"
+}
+
+_storm_ps1_title() {
+  # xterm-compatible terminal title: "user@host: path"
+  printf '\e]0;\u@\h: %s\a' "${PWD/#$HOME/~}"
+}
+
+_storm_ps1() {
+  local exit_code=$?
+  _STORM_PREV_EXIT=$exit_code
+
+  # Reset PS1 components
+  local ps1_parts=()
+  ps1_parts+=('\[\033[01;32m\]\u@\h\[\033[00m\]')
+  ps1_parts+=(':\[\033[01;34m\]\w\[\033[00m\]')
+
+  # Git status if inside a repository
+  local git_info
+  git_info=$(_storm_ps1_git)
+  [ -n "$git_info" ] && ps1_parts+=("$git_info")
+
+  # Last exit code
+  _storm_ps1_exit
+
+  # Prompt marker
+  ps1_parts+=('$ ')
+
+  PS1="$(IFS=; echo "${ps1_parts[*]}")"
+  _storm_ps1_title
+}
+
+PROMPT_COMMAND="_storm_ps1; ${PROMPT_COMMAND:+${PROMPT_COMMAND}; }"
+
+# ==============================================================================
+# HISTORY — interactive search + fuzzy ctrl-r
+# ==============================================================================
+case "$-" in
+  *i*)
+    # Up/down search the history for entries matching the current input prefix
+    # (not just the last command). This is what makes "history only go to things
+    # that match the already typed stuff".
+    bind '"\e[A": history-search-backward'
+    bind '"\e[B": history-search-forward'
+    bind '"\eOA": history-search-backward'
+    bind '"\eOB": history-search-forward'
+
+    # Case-insensitive completion everywhere.
+    bind 'set completion-ignore-case on'
+    bind 'set completion-map-case on'
+    bind 'set completion-prefix-display-length 2'
+
+    # FZF fuzzy history search (ctrl-r) — only when fzf is installed.
+    if command -v fzf >/dev/null 2>&1; then
+      # fzf ships its own bash bindings via `fzf --bash`. Evaluate those first
+      # (they register ctrl-r, ctrl-t, alt-c and the fzf completions), then
+      # override ctrl-r with a richer history search that includes timestamps.
+      #
+      # We eval the fzf bindings in a subshell first to capture its bind/fzf
+      # function definitions without polluting the current shell with its
+      # helper variables. Then we source the result. This is the same as
+      # `eval "$(fzf --bash)"` but easier to guard and debug.
+      eval "$(fzf --bash 2>/dev/null)" 2>/dev/null
+
+      # Override ctrl-r with a timestamp-annotated history search.
+      # fzf --bash already binds ctrl-r; re-bind it to our richer version.
+      __storm_fzf_history() {
+        local histfile="${HISTFILE:-${HOME}/.bash_history}"
+        [ -f "$histfile" ] || return
+        # Build a fuzzy-searchable list: "timestamp  command"
+        local list
+        list=$(awk -v ft="$(date +%s)" '
+          /^#/ { ts=$0; sub(/#/, "", ts); next }
+          { if (ts) printf "%010d  %s\n", ts, $0; ts="" }
+        ' "$histfile" 2>/dev/null | tac | fzf --tmux 0 --height 40% \
+           --reverse --tiebreak=index --no-sort --prompt="ctrl-r> " \
+           --preview 'echo {2..}' --preview-window="down:3:wrap" \
+           --bind=ctrl-s:toggle-sort 2>/dev/null)
+        [ -z "$list" ] && return
+        local cmd
+        cmd="${list#*  }"
+        # Accept the selection. If still typing, append; otherwise replace.
+        READLINE_LINE="${READLINE_LINE:+$READLINE_LINE$'\n'}${cmd}"
+        READLINE_POINT=${#READLINE_LINE}
+      }
+      bind -x '"\C-r": __storm_fzf_history'
+    fi
+    ;;
+esac
+
+# ==============================================================================
+# COMPLETIONS
+# ==============================================================================
+# There is no system bash-completion framework on this VM, so we wire what we
+# can directly: git's standalone completion file, plus completions for every
+# storm function. All guarded on file/binary existence.
+
+# --- Git completion (standalone file) ---
+if [ -f /usr/share/bash-completion/completions/git ]; then
+  source /usr/share/bash-completion/completions/git 2>/dev/null
+elif [ -f /usr/share/bash-completion/bash_completion ]; then
+  source /usr/share/bash-completion/bash_completion 2>/dev/null
+elif [ -f /etc/bash_completion ]; then
+  source /etc/bash_completion 2>/dev/null
+fi
+
+# --- Storm function completions ---
+
+_storm_complete_storm_update() {
+  COMPREPLY=()
+}
+
+_storm_complete_storm_logs() {
+  COMPREPLY=()
+}
+
+_storm_complete_storm_clean() {
+  COMPREPLY=()
+}
+
+_storm_complete_storm_rebuild() {
+  COMPREPLY=()
+}
+
+_storm_complete_build() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  local cands
+  cands=$(find . -maxdepth 1 -name "*.cpp" -o -name "*.c" -o -name "*.cc" 2>/dev/null \
+          | sed 's/\.[^.]*$//' | sed 's/^\.\///')
+  COMPREPLY=($(compgen -W "$cands" -- "$cur"))
+}
+
+_storm_complete_mkcd() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  COMPREPLY=($(compgen -d -- "$cur"))
+}
+
+_storm_complete_grep() {
+  local cur prev
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  if [ "$prev" = "-f" ] || [ "$prev" = "--file" ]; then
+    COMPREPLY=($(compgen -f -- "$cur"))
+  else
+    COMPREPLY=($(compgen -f -- "$cur"))
+  fi
+}
+
+complete -F _storm_complete_build build
+complete -F _storm_complete_mkcd mkcd
+complete -F _storm_complete_storm_update storm-update
+complete -F _storm_complete_storm_logs storm-logs
+complete -F _storm_complete_storm_clean storm-clean
+complete -F _storm_complete_storm_rebuild storm-rebuild
+complete -F _storm_complete_grep grep
+
+# --- Tool completions (guarded on binary existence) ---
+if command -v eza >/dev/null 2>&1; then
+  complete -o default -o filenames -o nospace -F __eza_eza_complete eza 2>/dev/null \
+    || true
+fi
+
+# fd ships its own bash completion file inside the tarball. If it landed in a
+# place we can source, wire it in.
+if command -v fd >/dev/null 2>&1; then
+  for _fd_comp in \
+      "$STORM/share/fd/completions/fd.bash" \
+      "$STORM/share/bash-completion/completions/fd" \
+      /usr/share/bash-completion/completions/fd; do
+    [ -f "$_fd_comp" ] && source "$_fd_comp" 2>/dev/null && break
+  done
+  # Fallback: fd is also commonly invoked as `fdfind` on some distros.
+  command -v fdfind >/dev/null 2>&1 && alias fd=fdfind
+
+  # Alias fd to rg for recursive grep-like usage (fd is already rg-like).
+  alias fd='fd --color=always'
+fi
+
+if command -v rg >/dev/null 2>&1; then
+  for _rg_comp in \
+      "$STORM/share/ripgrep/completions/bash/rg" \
+      /usr/share/bash-completion/completions/rg; do
+    [ -f "$_rg_comp" ] && source "$_rg_comp" 2>/dev/null && break
+  done
+fi
+
+if command -v zoxide >/dev/null 2>&1; then
+  # zoxide ships zoxide init bash which defines __zoxide_zsh_hook-like helpers
+  # and the `zi` / `z` functions. Source it so that `z` gets completion.
+  eval "$(zoxide init bash 2>/dev/null)" 2>/dev/null
+
+  # Make `cd` and `pushd` go through zoxide when a match exists.
+  _storm_cd_with_zoxide() {
+    local cur="$1"
+    if [ -n "$cur" ]; then
+      builtin cd "$cur"
+    else
+      # Interactive: use zoxide to resolve quickjumps. Non-interactive: just cd.
+      if [ -t 0 ]; then
+        local target
+        target=$(zoxide query -i -- "$@") && builtin cd "$target"
+      else
+        builtin cd
+      fi
+    fi
+  }
+  alias cd='_storm_cd_with_zoxide'
+  alias j='zoxide query -i --'
+  alias s='zoxide query -i --select'
+fi
+
+if command -v bat >/dev/null 2>&1; then
+  alias cat='bat --paging=never'
+  alias bat='bat --paging=always'
+  # bat ships completion files too
+  for _bat_comp in \
+      "$STORM/share/bat/autocomplete/bat.bash" \
+      /usr/share/bash-completion/completions/bat; do
+    [ -f "$_bat_comp" ] && source "$_bat_comp" 2>/dev/null && break
+  done
+fi
+
+# ==============================================================================
+# PATH / XDG
+# ==============================================================================
+: "${STORM_REPO:=$HOME/.storm-env}"
+export STORM_REPO
+
+export STORM="/var/tmp/$USER-storm"
+
+# Prepend each directory once, in priority order.
+for dir in "$STORM/bin" "$STORM_REPO" "$HOME/.local/bin" "$HOME/bin"; do
+  case ":$PATH:" in
+    *":$dir:"*) ;;
+    *) export PATH="$dir:$PATH" ;;
+  esac
+done
+
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$STORM/share}"
+export XDG_STATE_HOME="${XDG_STATE_HOME:-$STORM/state}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$STORM/cache}"
+
+# ==============================================================================
+# TOOL ALIASES — guarded on existence so a missing binary never breaks the env.
+# ==============================================================================
+command -v nvim    >/dev/null 2>&1 && alias vim="nvim"  && alias vi="nvim"
+command -v eza     >/dev/null 2>&1 && alias ls="eza"    || alias ls="ls --color=auto"
+command -v lazygit >/dev/null 2>&1 && alias lg="lazygit"
+command -v rg      >/dev/null 2>&1 && alias grep="rg --color=auto" \
+  || alias grep="grep --color=auto"
+command -v jq      >/dev/null 2>&1 && alias json="jq ."
+command -v fastfetch >/dev/null 2>&1 && alias sys="fastfetch"
+
+alias la='eza -a --icons=auto'      2>/dev/null || alias la='ls -lah'
+alias ll='eza -l --icons=auto'      2>/dev/null || alias ll='ls -lh'
+alias tree='eza --tree --icons=auto' 2>/dev/null || alias tree='tree'
+alias ..='cd ..'
+alias ...='cd ../..'
+alias .....='cd ../../..'
+alias c='clear'
+alias h='history'
+alias j='jobs -l'
+
+# ==============================================================================
+# FUNCTIONS
+# ==============================================================================
 build() {
   if [ -z "$1" ]; then
     echo "Usage: build <filename_without_extension>"
     return 1
   fi
-  g++ -Wall -Wextra "$1".cpp -o "$1" && ./"$1"
+  g++ -Wall -Wextra "$1".cpp -o "$1" && "./$1"
 }
 
 mkcd() {
@@ -36,53 +343,98 @@ mkcd() {
   mkdir -p "$1" && cd "$1"
 }
 
-# History setup
-export HISTSIZE=10000
-export HISTFILESIZE=20000
-export HISTCONTROL=ignoreboth:erasedups
-shopt -s histappend cdspell
+# Quick project-local scratch: create + cd + init a git repo if wanted.
+scratch() {
+  local dir="${1:-scratch}"
+  mkdir -p "$dir" && cd "$dir" || return
+  echo "[storm] Created $(pwd)"
+  if command -v git >/dev/null 2>&1 && [ -z "$(git rev-parse --git-dir 2>/dev/null)" ]; then
+    echo -n "[storm] git init? (y/N) "
+    read -r ans
+    [[ "$ans" =~ ^[Yy]$ ]] && git init
+  fi
+}
 
-# readline bindings only make sense in an interactive shell; running them
-# otherwise prints "bind: warning: line editing not enabled" on every ssh cmd.
+# ==============================================================================
+# PROJECT AWARENESS — run on every cd.
+# ==============================================================================
+_storm_chpwd() {
+  local repo_root
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null)
+  if [ -n "$repo_root" ]; then
+    export GIT_DIR="${repo_root}/.git"
+    export GIT_WORK_TREE="${repo_root}"
+    # Project-local python venv
+    if [ -d .venv ] && command -v python3 >/dev/null 2>&1; then
+      : "${VIRTUAL_ENV:=}"   # don't clobber an already-active venv
+      if [ -z "$VIRTUAL_ENV" ] || [ "$VIRTUAL_ENV" != "$(pwd)/.venv" ]; then
+        deactivate 2>/dev/null
+        source .venv/bin/activate 2>/dev/null
+      fi
+    fi
+    # Project-local node_modules/.bin (no node on this VM, but guard anyway)
+    if [ -d node_modules/.bin ]; then
+      case ":$PATH:" in
+        *":$(pwd)/node_modules/.bin:"*) ;;
+        *) export PATH="$(pwd)/node_modules/.bin:$PATH" ;;
+      esac
+    fi
+  else
+    # Leaving a repo: deactivate venv if it was set by a project
+    if [ -n "$VIRTUAL_ENV" ] && [ "$VIRTUAL_ENV" != "$HOME/.venv" ]; then
+      deactivate 2>/dev/null
+    fi
+  fi
+
+  # Update the prompt's idea of where we are (already done by PROMPT_COMMAND).
+  :
+}
+
+# Run chpwd on every directory change (Bash 4.4+ supports PROMPT_COMMAND hook,
+# butchpwd is the canonical way.)
+trap '_storm_chpwd' DEBUG
+# Actually use the builtin chpwd hook if available; fall back to DEBUG trap.
+if [ -n "${chpwd+x}" ]; then
+  chpwd() { _storm_chpwd; }
+fi
+
+# ==============================================================================
+# SSH AGENT — auto-start and load keys in interactive sessions only.
+# ==============================================================================
+_storm_ssh_agent_setup() {
+  # If an agent is already running andssh-add -l works, nothing to do.
+  if [ -n "$SSH_AUTH_SOCK" ] && ssh-add -l >/dev/null 2>&1; then
+    return
+  fi
+
+  # Try to connect to a possibly-running agent before starting a new one.
+  if [ -n "$SSH_AUTH_SOCK" ]; then
+    ssh-add -l >/dev/null 2>&1 && return
+    unset SSH_AUTH_SOCK SSH_AGENT_PID
+  fi
+
+  # Start a new agent.
+  eval "$(ssh-agent -s)" >/dev/null 2>&1 || return
+
+  # Load default keys (id_ed25519, id_rsa, and the school submit_key).
+  local keys=()
+  for k in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa" "$HOME/.ssh/submit_key"; do
+    [ -f "$k" ] && [ -f "${k}.pub" ] && keys+=("$k")
+  done
+  if [ ${#keys[@]} -gt 0 ]; then
+    ssh-add "${keys[@]}" 2>/dev/null
+  fi
+}
+
 case "$-" in
   *i*)
-    bind '"\e[A": history-search-backward'
-    bind '"\e[B": history-search-forward'
-    bind 'set completion-ignore-case on'
+    _storm_ssh_agent_setup
     ;;
 esac
 
 # ==============================================================================
-# /TMP STORM ENVIRONMENT DEPLOYMENT
+# STORM MANAGEMENT FUNCTIONS
 # ==============================================================================
-# STORM_REPO is used everywhere below and by bootstrap.sh, but was never defined
-# outside bootstrap.sh itself. Default it here and export it so child processes
-# (including bootstrap.sh) inherit it. Override before sourcing to relocate.
-: "${STORM_REPO:=$HOME/.storm-env}"
-export STORM_REPO
-
-export STORM="/var/tmp/$USER-storm"
-
-# Prepend paths individually without duplicating
-for dir in "$STORM/bin" "$STORM_REPO" "$HOME/.local/bin" "$HOME/bin"; do
-  case ":$PATH:" in
-    *":$dir:"*) ;;
-    *) export PATH="$dir:$PATH" ;;
-  esac
-done
-
-# Persist config in HOME, but push heavy data/plugins/cache to /var/tmp
-export XDG_CONFIG_HOME="$HOME/.config"
-export XDG_DATA_HOME="$STORM/share"
-export XDG_STATE_HOME="$STORM/state"
-export XDG_CACHE_HOME="$STORM/cache"
-
-# Only alias to tools that actually exist. If bootstrap failed, an unconditional
-# `alias ls=eza` leaves you with no `ls` at all.
-command -v nvim    >/dev/null 2>&1 && alias vim="nvim"
-command -v eza     >/dev/null 2>&1 && alias ls="eza"
-command -v lazygit >/dev/null 2>&1 && alias lg="lazygit"
-
 storm-update() {
   echo "Updating Storm repository..."
   cd "$STORM_REPO" || return
@@ -95,7 +447,7 @@ storm-update() {
 storm-logs() {
   local log_file="$STORM/bootstrap.log"
   if [ -f "$log_file" ]; then
-    cat "$log_file"
+    less "$log_file"
   else
     echo "No log file found at $log_file"
   fi
@@ -103,7 +455,7 @@ storm-logs() {
 
 storm-clean() {
   # Remove ONLY this user's Storm paths. Never hardcode a username here, and
-  # never use a relative path -- `rm -rf .storm-env` deletes whatever happens
+  # never use a relative path — `rm -rf .storm-env` deletes whatever happens
   # to be named that in the current directory.
   local repo="${STORM_REPO:-$HOME/.storm-env}"
 
@@ -148,31 +500,34 @@ storm-rebuild() {
 # REPORTING UTILITIES
 # ==============================================================================
 start-report() {
-    START_REPORT_NUM=$(history 1 | awk '{print $1}')
-    echo "Report tracking started at history entry #$START_REPORT_NUM"
+  START_REPORT_NUM=$(history 1 | awk '{print $1}')
+  echo "Report tracking started at history entry #$START_REPORT_NUM"
 }
 
 stop-report() {
-    if [ -z "$1" ]; then
-        echo "Usage: stop-report <output_file>"
-        return 1
-    fi
-    if [ -z "$START_REPORT_NUM" ]; then
-        echo "Error: Run 'start-report' first."
-        return 1
-    fi
+  if [ -z "$1" ]; then
+    echo "Usage: stop-report <output_file>"
+    return 1
+  fi
+  if [ -z "$START_REPORT_NUM" ]; then
+    echo "Error: Run 'start-report' first."
+    return 1
+  fi
 
-    local stop_num
-    stop_num=$(history 1 | awk '{print $1}')
+  local stop_num
+  stop_num=$(history 1 | awk '{print $1}')
 
-    # Extract history lines executed between start-report and stop-report
-    history | awk -v start="$START_REPORT_NUM" -v stop="$stop_num" '$1 > start && $1 < stop' > "$1"
+  # Extract history lines executed between start-report and stop-report
+  history | awk -v start="$START_REPORT_NUM" -v stop="$stop_num" \
+    '$1 > start && $1 < stop' > "$1"
 
-    echo "Saved history to $1 (entries $((START_REPORT_NUM + 1)) to $((stop_num - 1)))"
-    unset START_REPORT_NUM
+  echo "Saved history to $1 (entries $((START_REPORT_NUM + 1)) to $((stop_num - 1)))"
+  unset START_REPORT_NUM
 }
 
-# Auto-Build /var/tmp Environment if wiped (Interactive Shells Only)
+# ==============================================================================
+# AUTO-REBUILD /var/tmp if wiped (interactive shells only)
+# ==============================================================================
 case "$-" in
   *i*)
     if [ ! -d "$STORM/bin" ]; then
@@ -187,9 +542,10 @@ case "$-" in
     ;;
 esac
 
-# Auto-start Tmux on SSH
-# Guarded on interactivity: bash also sources .bashrc for `ssh host <cmd>`, and
-# an unguarded `exec tmux` breaks scp, sftp, rsync and git-over-ssh.
+# ==============================================================================
+# AUTO-START TMUX ON SSH — guarded on interactivity so scp/sftp/rsync aren't
+# broken by an accidental exec.
+# ==============================================================================
 case "$-" in
   *i*)
     if [ -n "$SSH_CONNECTION" ] && [ -z "$TMUX" ] && [ "$TERM" != "dumb" ]; then
