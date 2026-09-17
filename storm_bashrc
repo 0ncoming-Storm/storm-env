@@ -90,7 +90,7 @@ _storm_ps1() {
   _storm_ps1_title
 }
 
-PROMPT_COMMAND="_storm_ps1; ${PROMPT_COMMAND:+${PROMPT_COMMAND}; }"
+PROMPT_COMMAND="${PROMPT_COMMAND:-_storm_ps1}"
 
 # ==============================================================================
 # HISTORY — interactive search + fuzzy ctrl-r
