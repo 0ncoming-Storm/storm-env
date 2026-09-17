@@ -72,8 +72,8 @@ _storm_ps1() {
 
   # Reset PS1 components
   local ps1_parts=()
-  ps1_parts+=('\[\033[01;32m\]\u@\h\[\033[00m\]')
-  ps1_parts+=(':\[\033[01;34m\]\w\[\033[00m\]')
+  ps1_parts+=('\[\033[01;32m]\u@\h\[\033[00m\]')
+  ps1_parts+=(':\u@\h:\w\$ ')
 
   # Git status if inside a repository
   local git_info
@@ -112,40 +112,58 @@ case "$-" in
 
     # FZF fuzzy history search (ctrl-r) — only when fzf is installed.
     if command -v fzf >/dev/null 2>&1; then
-      # fzf --bash needs these env vars to wire ctrl-r, ctrl-t, alt-c.
-      export FZF_CTRL_T_COMMAND="${FZF_CTRL_T_COMMAND:-${FZF_DEFAULT_COMMAND:-fd --type f --color=always --hidden --exclude .git}}"
-      export FZF_ALT_C_COMMAND="${FZF_ALT_C_COMMAND:-${FZF_DEFAULT_COMMAND:-fd --type d --color=always --hidden --exclude .git}}"
-      export FZF_CTRL_R_OPTS="--tmux 0 --height 40% --reverse --tiebreak=index --no-sort --prompt='ctrl-r> ' --preview='echo {2..}' --preview-window='down:3:wrap' --bind=ctrl-s:toggle-sort"
-
-      # Evaluate fzf's bash bindings (registers ctrl-r, ctrl-t, alt-c and
-      # fzf-aware completions). Guarded so a non-interactive source can't break.
-      eval "$(fzf --bash 2>/dev/null)" 2>/dev/null
-
-      # Override ctrl-r with a timestamp-annotated history search.
-      # fzf --bash already binds ctrl-r; re-bind it to our richer version.
+      # fzf 0.74.4's `fzf --bash` gates its own bindings behind
+      # `if [[ $- =~ i ]]`, so when sourced from a script it emits nothing.
+      # Provide our own bindings directly instead, using fd as the backend.
+      #
+      # ctrl-r: fuzzy history search via fzf, using `history` command output
+      # (robust across HISTFILE locations and timestamp/no-timestamp formats).
       __storm_fzf_history() {
-        local histfile="${HISTFILE:-${HOME}/.bash_history}"
-        [ -f "$histfile" ] || return
-        # Build a fuzzy-searchable list: "timestamp  command"
+        history -r 2>/dev/null   # reload history from $HISTFILE if not loaded
         local list
-        list=$(awk -v ft="$(date +%s)" '
-          /^#/ { ts=$0; sub(/#/, "", ts); next }
-          { if (ts) printf "%010d  %s\n", ts, $0; ts="" }
-        ' "$histfile" 2>/dev/null | tac | fzf --tmux 0 --height 40% \
-           --reverse --tiebreak=index --no-sort --prompt="ctrl-r> " \
-           --preview 'echo {2..}' --preview-window="down:3:wrap" \
-           --bind=ctrl-s:toggle-sort 2>/dev/null)
+        list=$(history 2>/dev/null | tail -n 200 |
+          fzf --tmux 0 --height 40% --reverse --tiebreak=index \
+              --no-sort --prompt="ctrl-r> " \
+              --preview 'echo {2..}' --preview-window="down:3:wrap" \
+              --bind=ctrl-s:toggle-sort 2>/dev/null)
         [ -z "$list" ] && return
-        local cmd
-        cmd="${list#*  }"
-        # Accept the selection. If still typing, append; otherwise replace.
+        local cmd="${list#*[0-9]*  }"
         READLINE_LINE="${READLINE_LINE:+$READLINE_LINE$'\n'}${cmd}"
         READLINE_POINT=${#READLINE_LINE}
       }
       bind -x '"\C-r": __storm_fzf_history'
-    fi
-    ;;
-esac
+
+      # ctrl-t: fuzzy file picker via fd + fzf, inserts selection at cursor
+      __storm_fzf_file() {
+        local selected
+        selected=$(command fd --type f --color=never --hidden --exclude .git . 2>/dev/null |
+          fzf --tmux 0 --height 40% --reverse --tiebreak=index \
+              --prompt="ctrl-t> " --preview 'command ls -la {}' \
+              --preview-window="down:3:wrap" --bind=ctrl-s:toggle-sort 2>/dev/null)
+        [ -z "$selected" ] && return
+        READLINE_LINE="${READLINE_LINE:+$READLINE_LINE }${selected}"
+        READLINE_POINT=${#READLINE_LINE}
+      }
+      bind -x '"\C-t": __storm_fzf_file'
+
+      # alt-c: fuzzy directory picker via fd + fzf, cds into selection
+      __storm_fzf_dir() {
+        local selected
+        selected=$(command fd --type d --color=never --hidden --exclude .git . 2>/dev/null |
+          fzf --tmux 0 --height 40% --reverse --tiebreak=index \
+              --prompt="alt-c> " --preview 'command ls -la {}' \
+              --preview-window="down:3:wrap" --bind=ctrl-s:toggle-sort 2>/dev/null)
+        [ -z "$selected" ] && return
+        builtin cd "$selected" || return
+        # Refresh the prompt
+        if [ -n "${PROMPT_COMMAND:-}" ]; then
+          eval "$PROMPT_COMMAND" 2>/dev/null
+        fi
+      }
+      bind -x '"\ec": __storm_fzf_dir'
+      fi
+      ;;
+    esac
 
 # ==============================================================================
 # COMPLETIONS
@@ -542,6 +560,10 @@ case "$-" in
     ;;
 esac
 
+# ==============================================================================
+# AUTO-START TMUX ON SSH — guarded on interactivity so scp/sftp/rsync aren't
+# broken by an accidental exec.
+# ==============================================================================
 # ==============================================================================
 # AUTO-START TMUX ON SSH — guarded on interactivity so scp/sftp/rsync aren't
 # broken by an accidental exec.
