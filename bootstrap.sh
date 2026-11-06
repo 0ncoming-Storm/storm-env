@@ -41,6 +41,27 @@ if [ -d "$STORM_REPO/nvim" ]; then
     fi
 fi
 
+# Link clangd global config ($XDG_CONFIG_HOME/clangd/config.yaml) so the
+# GCC fallback compiler and default flags survive and stay tracked with
+# the rest of the environment. A pre-existing clangd directory is backed
+# up, never rm -rf'd.
+if [ -d "$STORM_REPO/clangd" ]; then
+    clangd_link="$HOME/.config/clangd"
+    if [ -L "$clangd_link" ] && [ "$(readlink "$clangd_link")" = "$STORM_REPO/clangd" ]; then
+        : # already linked correctly
+    elif [ -L "$clangd_link" ]; then
+        echo " [!] Repointing stale clangd symlink ($(readlink "$clangd_link"))"
+        ln -sfn "$STORM_REPO/clangd" "$clangd_link"
+    elif [ -e "$clangd_link" ]; then
+        backup="$clangd_link.storm-backup-$(date +%Y%m%d%H%M%S)"
+        echo " [!] Existing clangd config found -- moved to $backup"
+        mv "$clangd_link" "$backup"
+        ln -sfn "$STORM_REPO/clangd" "$clangd_link"
+    else
+        ln -sfn "$STORM_REPO/clangd" "$clangd_link"
+    fi
+fi
+
 get_download_url() {
     local repo="$1"
     local pattern="$2"

@@ -1,0 +1,22 @@
+# clangd global config — symlinked to $XDG_CONFIG_HOME/clangd/config.yaml
+# (~/.config/clangd/config.yaml) by bootstrap.sh. Only read when clangd
+# is started with --enable-config (see nvim/lua/plugins/clangd.lua).
+#
+# The school VM has GCC but no system Clang, so the fallback compile
+# command must name g++ explicitly. Without `Compiler: /usr/bin/g++`,
+# clangd's fallback assumes `/usr/bin/clang` and system-include
+# extraction logs "driver clang not found in PATH". With it, the
+# fallback becomes `/usr/bin/g++ --driver-mode=g++ ...` and the
+# `--query-driver=/usr/bin/**/g++*` whitelist lets clangd extract
+# libstdc++ includes ( /usr/include/c++/11, ... ) from g++.
+#
+# Project-level `.clangd` files in a project root override this file,
+# so per-assignment flags (e.g. -std=c++11) don't require editing it.
+CompileFlags:
+  Compiler: /usr/bin/g++
+  CompilationDatabase: .
+  Add:
+    - -std=c++17
+    - -Wall
+    - -Wextra
+WarningsAsErrors: []

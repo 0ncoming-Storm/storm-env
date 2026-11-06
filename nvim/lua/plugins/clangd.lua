@@ -9,17 +9,24 @@
 --     "--function-arg-placeholders", "--fallback-style=llvm" } }
 --
 -- This file extends that table in-place for this host:
---   * `--query-driver=/usr/bin/g++` -- let clangd ask g++ for its
---     include paths (libstdc++ lives under /usr/include/c++/11 and
---     /usr/lib/gcc/x86_64-redhat-linux/11/include). Without this,
---     <iostream> and other GCC headers fail to resolve when no
---     compile_commands.json is present. Guarded on the driver existing.
+--   * `--query-driver=/usr/bin/**/g++*,...` -- whitelist the GCC
+--     driver so clangd may ask g++ for its include paths (libstdc++
+--     lives under /usr/include/c++/11 and
+--     /usr/lib/gcc/x86_64-redhat-linux/11/include). Paired with the
+--     global `clangd/config.yaml` below (Compiler: /usr/bin/g++), the
+--     fallback compile command uses g++ and extraction succeeds even
+--     with no compile_commands.json. Guarded on the driver existing.
 --   * `--enable-config` -- read `.clangd` / `config.yaml` files so a
 --     project can supply `CompileFlags` (e.g. `-std=c++11 -Wall`)
 --     without editing Neovim.
 --   * `--offset-encoding=utf-16` -- match the extra's
 --     `capabilities.offsetEncoding = { "utf-16" }` so edit positions
 --     stay consistent even if negotiation differs.
+--   * `--background-index-priority=low` -- keep background indexing
+--     for larger projects, but don't starve SSH responsiveness.
+--   * Normalises the extra's bare `--function-arg-placeholders` to
+--     `--function-arg-placeholders=true` for clangd 23, which rejects
+--     the valueless form ("Value specified ... is invalid").
 --
 -- The Mason spec below is belt-and-suspenders: Mason's
 -- `ensure_installed` also installs `clangd` when Mason loads,
@@ -29,15 +36,14 @@
 -- the home-directory quota. After `/var/tmp` is wiped, `bootstrap.sh`
 -- pre-installs it again headlessly (see bootstrap.sh).
 --
--- To give clangd project flags (e.g. match your Makefile's
--- `-std=c++11 -Wall`), drop a `.clangd` in the project root, or a
--- `compile_commands.json` / `compile_flags.txt` next to the sources:
-
---   CompileFlags:
---     Add:
---       - -std=c++17
---       - -Wall
---       - -Wextra
+-- Global fallback flags live in the tracked `clangd/config.yaml`
+-- (symlinked to `$XDG_CONFIG_HOME/clangd/config.yaml` by bootstrap.sh):
+--     CompileFlags:
+--       Compiler: /usr/bin/g++
+--       Add: [-std=c++17, -Wall, -Wextra]
+-- Project-level overrides beat the global file, so to match a
+-- Makefile's `-std=c++11 -Wall` for one assignment, drop a `.clangd`
+-- in that project's root with the desired `CompileFlags.Add`.
 
 return {
   {
@@ -59,8 +65,20 @@ return {
         return vim.tbl_contains(clangd.cmd, flag)
       end
 
-      if not has("--query-driver=/usr/bin/g++") and vim.fn.executable("/usr/bin/g++") == 1 then
-        table.insert(clangd.cmd, "--query-driver=/usr/bin/g++")
+      -- clangd 23 rejects the bare `--function-arg-placeholders`.
+      for i, flag in ipairs(clangd.cmd) do
+        if flag == "--function-arg-placeholders" then
+          clangd.cmd[i] = "--function-arg-placeholders=true"
+        end
+      end
+
+      -- Whitelist GCC drivers for system-include extraction. The
+      -- compiler itself is selected via clangd/config.yaml
+      -- (Compiler: /usr/bin/g++), so the fallback command and
+      -- extracted includes both come from g++.
+      local qd = "--query-driver=/usr/bin/**/g++,/usr/bin/**/g++-*,/usr/bin/**/gcc*"
+      if not has(qd) and vim.fn.executable("/usr/bin/g++") == 1 then
+        table.insert(clangd.cmd, qd)
       end
       if not has("--enable-config") then
         table.insert(clangd.cmd, "--enable-config")

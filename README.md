@@ -130,6 +130,8 @@ storm-env/
 ├── storm_bashrc      # Shell env — the file to source from .bashrc
 ├── storm-pkg         # CLI for editing packages.tsv
 ├── packages.tsv      # The package manifest
+├── clangd/           # clangd global config, symlinked to ~/.config/clangd
+│   └── config.yaml   # Fallback compiler (g++) + default flags
 └── nvim/             # LazyVim config, symlinked to ~/.config/nvim
     └── lua/plugins/  # Per-plugin overrides
 ```
@@ -210,8 +212,13 @@ Custom specs in `nvim/lua/plugins/`:
 | `remote.lua` | The important one. Disables `noice`, `bufferline` and `flash`, and turns off `update_in_insert` diagnostics. Cuts keystroke latency over SSH noticeably. |
 | `no-treesitter.lua` | Disables `nvim-treesitter` entirely and falls back to Vim's built-in syntax highlighting. Tree-sitter is not used at all — no CLI, no parsers. |
 | `mini-animate.lua` | Single source of truth for `mini.animate`. Re-points it at the current `nvim-mini/mini.animate` repo with linear scroll/resize timings. Flip `enabled = false` here to turn animations off. |
-| `clangd.lua` | Tunes the `lang.clangd` extra for this host: adds `--query-driver=/usr/bin/g++` so clangd finds GCC's libstdc++ headers without `compile_commands.json`, plus `--enable-config` (per-project `.clangd`), `--offset-encoding=utf-16`, and low-priority background indexing. Ensures Mason installs `clangd`. To match a Makefile's flags, drop a `.clangd` in the project root with `CompileFlags.Add` (see file header). |
+| `clangd.lua` | Tunes the `lang.clangd` extra for this host: whitelists GCC for `--query-driver` (libstdc++ headers) with `--enable-config` (per-project `.clangd` + global config), `--offset-encoding=utf-16`, low-priority background indexing, and fixes the extra's bare `--function-arg-placeholders` for clangd 23. Ensures Mason installs `clangd`. |
 | `example.lua` | LazyVim's sample spec. **Inert** — it returns early on line 3. |
+
+Global fallback flags for assignments without their own build system live in the tracked
+`clangd/config.yaml` (symlinked to `~/.config/clangd/config.yaml` by `bootstrap.sh`):
+`Compiler: /usr/bin/g++` + `Add: [-std=c++17, -Wall, -Wextra]`. A project-level `.clangd` in the
+project root overrides it, so you can match a Makefile's `-std=c++11 -Wall` per assignment.
 
 ## How it works
 
