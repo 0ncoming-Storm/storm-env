@@ -116,6 +116,12 @@ Everything except Neovim is declared in `packages.tsv`:
 **Neovim** bypasses the manifest and is special-cased in `bootstrap.sh`: pinned URL, extracted to
 `$STORM/nvim-app`, symlinked into `$STORM/bin`.
 
+**clangd (C/C++ LSP)** is not in `packages.tsv` — it is Mason-managed. `nvim/lazyvim.json` enables
+`lazyvim.plugins.extras.lang.clangd`, so `nvim-lspconfig` registers `clangd` and `mason-lspconfig`
+auto-installs it into `$STORM/share/nvim/mason`. `bootstrap.sh` pre-installs it headlessly (guarded on
+the binary being missing) so the first `nvim` after a `/var/tmp` wipe is ready immediately. The
+binary is ~225 MB extracted, so it lives in `/var/tmp` rather than the quota-limited `$HOME`.
+
 ## Layout
 
 ```
@@ -204,6 +210,7 @@ Custom specs in `nvim/lua/plugins/`:
 | `remote.lua` | The important one. Disables `noice`, `bufferline` and `flash`, and turns off `update_in_insert` diagnostics. Cuts keystroke latency over SSH noticeably. |
 | `no-treesitter.lua` | Disables `nvim-treesitter` entirely and falls back to Vim's built-in syntax highlighting. Tree-sitter is not used at all — no CLI, no parsers. |
 | `mini-animate.lua` | Single source of truth for `mini.animate`. Re-points it at the current `nvim-mini/mini.animate` repo with linear scroll/resize timings. Flip `enabled = false` here to turn animations off. |
+| `clangd.lua` | Tunes the `lang.clangd` extra for this host: adds `--query-driver=/usr/bin/g++` so clangd finds GCC's libstdc++ headers without `compile_commands.json`, plus `--enable-config` (per-project `.clangd`), `--offset-encoding=utf-16`, and low-priority background indexing. Ensures Mason installs `clangd`. To match a Makefile's flags, drop a `.clangd` in the project root with `CompileFlags.Add` (see file header). |
 | `example.lua` | LazyVim's sample spec. **Inert** — it returns early on line 3. |
 
 ## How it works
@@ -241,6 +248,14 @@ changed, or the binary inside isn't named exactly `<name>`. Unpack it by hand an
 
 **Neovim plugins missing** — run `nvim --headless "+Lazy! sync" +qa`. `bootstrap.sh` does this at
 the end of every sync, but it's silenced with `|| true`.
+
+**clangd not starting** — run `:Mason` and check `clangd` is installed, or
+`ls $STORM/share/nvim/mason/bin/clangd` (after `source ~/.storm-env/storm_bashrc`, `$STORM` is
+`/var/tmp/$USER-storm`). If it is missing, `bootstrap.sh` will re-install it on the next rebuild, or
+`:MasonInstall clangd` installs it immediately. If `<iostream>` resolves as missing, the
+`--query-driver=/usr/bin/g++` wiring in `nvim/lua/plugins/clangd.lua` is not active — verify
+`/usr/bin/g++` exists, and put `compile_commands.json` / `.clangd` in the project root for project
+flags.
 
 **Everything is broken** — `storm-rebuild` wipes `/var/tmp/$USER-storm` and reinstalls from scratch.
 Nothing you care about lives there.

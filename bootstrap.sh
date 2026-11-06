@@ -243,6 +243,17 @@ if [ -f "$BIN_DIR/nvim" ]; then
     # nvim-treesitter, so the tree-sitter CLI and parser sync are gone too.
     "$BIN_DIR/nvim" --headless "+Lazy! sync" +qa >/dev/null 2>&1 || true
     echo " [✓] Neovim synced"
+    # Pre-install Mason-managed LSP servers (clangd) so the first interactive
+    # nvim after a /var/tmp wipe is ready immediately. MasonInstall re-installs
+    # even when already present, so guard on the binary existing to stay
+    # idempotent on re-runs. The lazy-load line is required: LazyVim lists
+    # only "Mason" in `cmd`, so :MasonInstall is unknown until mason.nvim loads.
+    # MasonInstall in headless mode blocks until the download finishes.
+    if [ ! -x "$STORM/share/nvim/mason/bin/clangd" ]; then
+        echo " [↓] Pre-installing Mason LSP servers (clangd)..."
+        "$BIN_DIR/nvim" --headless "+lua require('lazy').load({plugins='mason.nvim'})" "+MasonInstall clangd" +qa >/dev/null 2>&1 || true
+        echo " [✓] Mason LSP servers synced"
+    fi
 fi
 
 echo "=== Sync Complete ==="
