@@ -14,9 +14,7 @@
 # so per-assignment flags (e.g. -std=c++11) don't require editing it.
 CompileFlags:
   Compiler: /usr/bin/g++
-  CompilationDatabase: .
   Add:
     - -std=c++17
     - -Wall
     - -Wextra
-WarningsAsErrors: []
