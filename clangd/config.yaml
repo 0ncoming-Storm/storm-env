@@ -7,7 +7,7 @@
 # clangd's fallback assumes `/usr/bin/clang` and system-include
 # extraction logs "driver clang not found in PATH". With it, the
 # fallback becomes `/usr/bin/g++ --driver-mode=g++ ...` and the
-# `--query-driver=/usr/bin/**/g++*` whitelist lets clangd extract
+# `--query-driver=/usr/bin/g++,/usr/bin/g++-*` whitelist lets clangd extract
 # libstdc++ includes ( /usr/include/c++/11, ... ) from g++.
 #
 # Project-level `.clangd` files in a project root override this file,

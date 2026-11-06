@@ -9,7 +9,7 @@
 --     "--function-arg-placeholders", "--fallback-style=llvm" } }
 --
 -- This file extends that table in-place for this host:
---   * `--query-driver=/usr/bin/**/g++*,...` -- whitelist the GCC
+--   * `--query-driver=/usr/bin/g++,/usr/bin/g++-*,...` -- whitelist the GCC
 --     driver so clangd may ask g++ for its include paths (libstdc++
 --     lives under /usr/include/c++/11 and
 --     /usr/lib/gcc/x86_64-redhat-linux/11/include). Paired with the
@@ -76,7 +76,7 @@ return {
       -- compiler itself is selected via clangd/config.yaml
       -- (Compiler: /usr/bin/g++), so the fallback command and
       -- extracted includes both come from g++.
-      local qd = "--query-driver=/usr/bin/**/g++,/usr/bin/**/g++-*,/usr/bin/**/gcc*"
+      local qd = "--query-driver=/usr/bin/g++,/usr/bin/g++-*,/usr/bin/gcc*"
       if not has(qd) and vim.fn.executable("/usr/bin/g++") == 1 then
         table.insert(clangd.cmd, qd)
       end
